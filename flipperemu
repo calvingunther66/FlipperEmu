@@ -5588,6 +5588,27 @@ class DevboardTarget:
             m.close()
 
 
+def put_module(dev, info):
+    """Says what is on the GPIO header, for the window (fe_gui.py), which
+    draws it: devices/NAME/module.json, {"module": its kind, "pid": this
+    process, and what the module says of itself}.  Written again when that
+    changes, and taken away with drop_module()."""
+    path = dev.dir / "module.json"
+    tmp = path.with_name(f".module.json.{os.getpid()}")
+    tmp.write_text(json.dumps({**info, "pid": os.getpid()}) + "\n")
+    os.replace(tmp, path)
+
+
+def drop_module(dev):
+    """Takes module.json away, when it is this process's"""
+    path = dev.dir / "module.json"
+    try:
+        if json.loads(path.read_text()).get("pid") == os.getpid():
+            path.unlink()
+    except (OSError, ValueError, AttributeError):
+        pass
+
+
 def cmd_devboard(args):
     """The Wi-Fi Developer Board on the header: pins 13 and 14 (the board's
     UART) and 10 and 12 (its probe's SWD).  It runs until Ctrl-C (it is
@@ -5631,7 +5652,8 @@ def cmd_devboard(args):
                        "uart": str(dev.dir / "devboard-uart.tty")},
                 scene=scene,
                 log=lambda text: print(f"[{dev.name}] devboard: {text}",
-                                       flush=True))
+                                       flush=True),
+                on_status=lambda info: put_module(dev, info))
         except OSError as e:
             sys.exit(f"[{dev.name}] devboard: {e} (--gdb-port and "
                      "--uart-port take another port, 0 any free one)")
@@ -5653,6 +5675,7 @@ def cmd_devboard(args):
     finally:
         if board:
             board.close()
+        drop_module(dev)
         leave_port(lock)
     if gone:
         print(f"[{dev.name}] devboard: the device stopped", file=sys.stderr)

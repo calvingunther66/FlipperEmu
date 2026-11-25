@@ -3146,9 +3146,15 @@ BKPT halts the processor as on SWD, so the firmware's own debugger hooks (the
 loader's stop where an app starts, the crash handler's) work. With Marauder, a scan
 finds the access points and stations of a scene (`--scene`, a JSON file), and the
 app's lists, selections and attacks work on them. Nothing goes on any air.
+
+In the window, the board appears on the Flipper's header, with what it is doing
+written on it and its LED lit to match. Clicking it gives its menu, which has
+gdb's command and Pull it out.
+
 [docs/DEVBOARD.md](docs/DEVBOARD.md) has all of it. `scripts/devboard_selftest.py`
-tests the board against a real gdb and a stock QEMU, and `scripts/devboard_check.py
-FIRMWARE` tests it on the emulator.
+tests the board against a real gdb and a stock QEMU, `scripts/devboard_check.py
+FIRMWARE` tests it on the emulator, and `scripts/devboard_gui_check.py FIRMWARE`
+tests it in the window.
 
 ### Bluetooth
 

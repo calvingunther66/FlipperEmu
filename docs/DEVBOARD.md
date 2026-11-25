@@ -33,6 +33,38 @@ out, or until the device stops. It holds pins 13 and 14 while it's there, the
 same way `expansion` does, so `uart --port usart` and the expansion service
 can't use them at the same time. That's what a physical board does too.
 
+### In the window
+
+When the device runs in the window (`./flipperemu run` with the GUI), the
+board appears on top of the Flipper. It stands up from the GPIO sockets with
+its ESP32-S2 module, its USB-C port, BOOT and RESET, and its LED, and the
+window grows to fit it. The board shows which firmware it runs and what it's
+doing, such as `gdb :2345 attached` or `scanall · 6 APs`. Its LED shows that
+too, in this picture's own colours:
+
+| LED | Black Magic Probe | Marauder |
+|---|---|---|
+| blue | no gdb | nothing running |
+| green | a gdb is connected | a scan or a sniff runs |
+| amber | attached to the Flipper's core | |
+| red | | an attack runs |
+
+These colours are the window's, not the real board's.
+
+Hover over the board for its ports. Click it, or right-click it, for its
+menu, which has gdb's and fbt's commands to copy and **Pull it out**. Pull it
+out ends `devboard` as Ctrl-C does. The console says when a board goes on
+the header and when it comes off.
+
+`devboard` tells the window what's on the header through
+`devices/NAME/module.json`, a small JSON object such as
+`{"module": "devboard", "firmware": "blackmagic", "gdb": "attached",
+"gdb_port": 2345, "uart_port": 3456, "pid": 4242}`. It writes the file again
+when anything in it changes, and removes it on exit. The window ignores a
+file whose process has gone. Another module can use the same file: the
+window draws a kind that `fe_gui_view.MODULE_ROOM` knows with that view's
+`draw_KIND`, and gives it a `tip_KIND` and a `fill_menu_KIND` in `fe_gui`.
+
 ## Black Magic Probe (the stock firmware)
 
 ```
@@ -181,6 +213,10 @@ and anything that would need real radio.
   (`scripts/devboard_selftest/target.c`). Marauder runs against a Flipper's
   side played by the script. It needs `qemu-system-arm`,
   `arm-none-eabi-gcc` and `gdb-multiarch`.
+- `scripts/devboard_gui_check.py FIRMWARE --out DIR` tests the board in the
+  window, off-screen. The board appears on the header and says when a gdb
+  connects and attaches. Pull it out removes it, and Marauder shows a scan
+  from `marauder.js`. It saves a picture of each step in DIR.
 - `scripts/devboard_check.py FIRMWARE` tests the board on the emulator with a
   Flipper firmware. With Debug off the scan fails, and after `sysctl debug 1`
   it attaches and detaches. An app's start halts at the loader's BKPT when

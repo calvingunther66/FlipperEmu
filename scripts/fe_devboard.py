@@ -1726,11 +1726,12 @@ class Board:
               free one; None: none)
     links     paths for links to its USB serial ports: {"gdb": .., "uart": ..}
     scene     marauder: the air (load_scene)
-    log       hears what it does, a line at a time"""
+    log       hears what it does, a line at a time
+    on_status hears status() each time it changes (a picture of the board)"""
 
     def __init__(self, target, uart, firmware="blackmagic", host="127.0.0.1",
                  gdb_port=2345, uart_port=3456, links=None, scene=None,
-                 log=None, seed=None):
+                 log=None, seed=None, on_status=None):
         if firmware not in FIRMWARES:
             raise ValueError(f"no firmware {firmware!r}: {', '.join(FIRMWARES)}")
         self.target = target
@@ -1743,6 +1744,8 @@ class Board:
         self.ptys = {}
         self.bridges = []               # sockets and pty fds of the UART bridge
         self.closing = False
+        self.on_status = on_status
+        self.said = None                # the status on_status heard last
         links = links or {}
         self.probe = self.marauder = None
         if firmware == "blackmagic":
@@ -1813,6 +1816,31 @@ class Board:
                          f"around it")
         return lines
 
+    def status(self):
+        """What it is and does, as a dict that changes only when that does:
+        module ("devboard"), firmware; blackmagic: gdb_port, uart_port (None:
+        none), gdb ("", "connected" or "attached"); marauder: mode (the scan
+        or attack that runs, or ""), aps (how many access points it found)"""
+        s = {"module": "devboard", "firmware": self.firmware}
+        if self.probe:
+            g = getattr(self, "gdb_listener", None)
+            u = getattr(self, "uart_listener", None)
+            s["gdb_port"] = g.port if g else None
+            s["uart_port"] = u.port if u else None
+            s["gdb"] = ("attached" if self.probe.stub is not None else
+                        "connected" if self.probe.client else "")
+        else:
+            s["mode"] = self.marauder.mode or ""
+            s["aps"] = len(self.marauder.aps)
+        return s
+
+    def _tell(self):
+        if self.on_status:
+            now = self.status()
+            if now != self.said:
+                self.said = now
+                self.on_status(dict(now))
+
     def step(self, seconds=0.05):
         """One turn of the loop: -> False once the Flipper's end is gone"""
         rs = [self.uart] + self.listeners
@@ -1855,6 +1883,7 @@ class Board:
                 self._bridge_in(fd)
         if self.marauder:
             self.marauder.tick()
+        self._tell()
         return not self.closing
 
     def _accept(self, listener):
