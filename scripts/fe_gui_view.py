@@ -1158,7 +1158,10 @@ class FlipperView(QtWidgets.QWidget):
                    Qt.AlignLeft | Qt.AlignVCenter,
                    "ESP32 Marauder" if info.get("firmware") == "marauder"
                    else "Black Magic Probe")
-        p.setPen(faded(DEVBOARD_INK, 170))
-        p.drawText(QRectF(x0 + 104, y0 + 57, 130, 7),
+        font.setPixelSize(5.8)
+        font.setBold(True)
+        p.setFont(font)
+        p.setPen(faded(DEVBOARD_INK, 225))
+        p.drawText(QRectF(x0 + 104, y0 + 57, 130, 9),
                    Qt.AlignLeft | Qt.AlignVCenter, self.devboard_line(info))
         p.restore()
