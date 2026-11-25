@@ -5542,33 +5542,37 @@ def vgm_reset_line(dev, every=0.5):
     (pin 16, PC0) lines, which it pulls low through the module's MOSFETs:
     a function -> "run", "reset" (RUN low) or "boot" (BOOT low).
 
-    The monitor takes one client at a time, and others (`shot`, `press`,
-    `cli`) need it while the module runs: each look connects, reads the
-    header and lets go, at most every `every` seconds, and a monitor that
-    is busy now is looked at again next time."""
+    A thread of its own looks, so that the link never waits for it: the
+    monitor takes one client at a time, and others (`shot`, `press`, `cli`)
+    need it while the module runs, so each look connects, reads the header
+    and lets go, every `every` seconds, and a monitor that is busy now is
+    looked at again next time."""
+    import threading
     from fe_monitor import Monitor
-    state = {"at": 0.0, "was": "run"}
+    state = {"was": "run"}
 
-    def look():
-        now = time.monotonic()
-        if now - state["at"] < every:
-            return state["was"]
-        state["at"] = now
+    def once():
         try:
-            m = Monitor(str(dev.monitor), timeout=2.0, wait=0.1)
+            m = Monitor(str(dev.monitor), timeout=2.0, wait=0.2)
         except (OSError, ConnectionError):
-            return state["was"]
+            return
         try:
             pins = {p["number"]: p for p in read_header(m) or ()}
         except (OSError, ConnectionError):
-            return state["was"]
+            return
         finally:
             m.close()
         low = {n for n in (15, 16) if n in pins and pins[n]["mode"] ==
                "output" and pins[n]["level"] == "low"}
         state["was"] = "reset" if 15 in low else "boot" if 16 in low else "run"
-        return state["was"]
-    return look
+
+    def watch():
+        while True:
+            once()
+            time.sleep(every)
+    once()
+    threading.Thread(target=watch, daemon=True).start()
+    return lambda: state["was"]
 
 
 def cmd_vgm(args):

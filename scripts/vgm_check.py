@@ -44,6 +44,10 @@ let math = require("math");
 delay(1500);
 print("imu", vgm.present(), math.floor(vgm.getPitch()), math.floor(vgm.getRoll()));
 """
+# the JS module's filter (Madgwick, beta 0.08) starts flat and turns toward
+# what the IMU measures at some 9 degrees a second, as on a real VGM: a tilt
+# shows after seconds, not at once
+TILT_JS = IMU_JS.replace("delay(1500)", "delay(8000)")
 
 
 def wait_for(what, seconds, step=0.2):
@@ -148,7 +152,8 @@ def main():
             return rc == 0 and screen.strip("\n") == mirror.strip("\n")
         check("the mirror is the screen", wait_for(same, 5),
               f"screen:\n{bench.fe('shot', '--text')[1]}\nmirror:\n"
-              f"{text.read_text() if text.exists() else '(none)'}")
+              f"{text.read_text() if text.exists() else '(none)'}\n"
+              f"the module:\n{module.out}")
         try:
             corner, w, h = png_pixel(hdmi, 0, 0)
             inside, _, _ = png_pixel(hdmi, 64 + 4 * 2, 48 + 6 * 1)
@@ -213,7 +218,9 @@ def main():
                   flat and abs(int(flat[1])) < 10 and abs(int(flat[2])) < 10,
                   out)
             bench.fe("vgm", "--imu", "accel-x=-1000", "accel-z=0")
-            rc, out = bench.fe("cli", "js /ext/imu.js", timeout=60)
+            js.write_text(TILT_JS)
+            bench.fe("push", js, "/ext/tilt.js")
+            rc, out = bench.fe("cli", "js /ext/tilt.js", timeout=60)
             tilt = re.search(r"imu true (-?\d+) (-?\d+)", out)
             check("tilted on its side, the pitch moves",
                   tilt and abs(int(tilt[1])) > 30, out)
