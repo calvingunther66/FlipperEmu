@@ -5497,6 +5497,169 @@ def cmd_expansion(args):
     return 1
 
 
+
+class DevboardTarget:
+    """The emulated Flipper as the Wi-Fi Developer Board sees it
+    (fe_devboard.Target): its gdb stub, its nRST, its SWD pins, its
+    flash's image, and the speed of what is wired to pins 13 and 14."""
+
+    def __init__(self, dev, fd):
+        self.dev = dev
+        self.fd = fd
+        for name in ("name", "core", "flash_base", "flash_page",
+                     "flash_size_reg", "sfr_reg"):
+            setattr(self, name, getattr(fd.Target, name))
+        self.drive = None
+
+    def stub(self):
+        try:
+            where = gdb_open_stub(self.dev)
+        except SystemExit as e:
+            raise OSError(str(e)) from None
+        if where.startswith("/") or "/" in where:
+            s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            s.settimeout(5)
+            s.connect(where)
+            return s
+        host, _, port = where.rpartition(":")
+        return socket.create_connection((host or "localhost", int(port)), 5)
+
+    def swd(self):
+        """The firmware's SWD pins: alternate function 0 (as at reset, and
+        with Settings > System > Debug on), else no probe reaches the core"""
+        m = open_monitor(self.dev)
+        try:
+            pins = read_header(m)
+        finally:
+            m.close()
+        if pins is None:
+            return None             # an emulator that cannot tell: as it was
+        got = {p["number"]: p for p in pins}
+        bad = [p for n, p in sorted(got.items()) if n in (10, 12)
+               and not (p["mode"] == "alternate" and p["function"] == 0)]
+        if not bad:
+            return None
+        return ("the firmware has pins 10 and 12 (SWCLK, SWDIO) as "
+                + " and ".join(fe_header.mode_text(p) for p in bad)
+                + ", not as SWD: Debug is off (Settings > System > Debug, "
+                "or `cli 'sysctl debug 1'`)")
+
+    def reset(self):
+        m = open_monitor(self.dev)
+        try:
+            m.cmd("system_reset")
+        finally:
+            m.close()
+
+    def persist(self, addr, data):
+        """Written to the flash's image through QEMU's own block layer (the
+        image is QEMU's, open, while it runs): `qemu-io` in its monitor"""
+        import tempfile
+        m = open_monitor(self.dev)
+        try:
+            if not self.drive:
+                for line in m.cmd("info block").splitlines():
+                    if self.dev.flash.name in line and "(#" in line:
+                        self.drive = line.split()[0]
+                        break
+            if not self.drive:
+                return "the flash's image is not among QEMU's drives"
+            fd_, path = tempfile.mkstemp(prefix="flipperemu-flash-")
+            try:
+                os.write(fd_, data)
+                os.close(fd_)
+                said = m.cmd(f'qemu-io {self.drive} "write -s {path} '
+                             f'{addr - self.flash_base} {len(data)}"')
+                m.cmd(f'qemu-io {self.drive} "flush"')
+            finally:
+                os.unlink(path)
+            if "wrote" not in said:
+                return " ".join(said.split()) or "qemu-io said nothing"
+            return None
+        finally:
+            m.close()
+
+    def line_baud(self, rate):
+        m = open_monitor(self.dev)
+        try:
+            if uart_line_baud(m, "usart") is not None:
+                m.cmd(f"qom-set {UART_QOM['usart']} line-baud {int(rate)}")
+        finally:
+            m.close()
+
+
+def cmd_devboard(args):
+    """The Wi-Fi Developer Board on the header: pins 13 and 14 (the board's
+    UART) and 10 and 12 (its probe's SWD).  It runs until Ctrl-C (it is
+    pulled out) or until the device stops."""
+    import fe_devboard as fd
+    from fe_cli import PortBusy, leave_port, take_port, usb_endpoint
+    dev = Device(args.device)
+    m = open_monitor(dev)
+    try:
+        own = usb_endpoint(m, UART_OWN["usart"])
+    finally:
+        m.close()
+    if not own:
+        sys.exit(f"[{dev.name}] pins 13 and 14 are as QEMU was told with "
+                 "--serial: the board needs a run with --serial stdio, pty, "
+                 "null, tcp:PORT or file:PATH")
+    scene = None
+    if args.firmware == "marauder":
+        try:
+            scene = fd.load_scene(args.scene)
+        except (OSError, ValueError) as e:
+            sys.exit(f"devboard: --scene: {e}")
+    try:
+        lock = take_port(dev.dir / "usart.lock", 2.0, "pins 13 and 14 are")
+    except PortBusy as e:
+        sys.exit(f"[{dev.name}] {e}")
+    kind, where = own
+    board = None
+    try:
+        if kind == "unix":
+            uart = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            uart.connect(where)
+        else:
+            uart = socket.create_connection(where, 5)
+        try:
+            board = fd.Board(
+                DevboardTarget(dev, fd), uart, args.firmware, host=args.listen,
+                gdb_port=None if args.gdb_port < 0 else args.gdb_port,
+                uart_port=None if args.uart_port < 0 else args.uart_port,
+                links={"gdb": str(dev.dir / "devboard-gdb.tty"),
+                       "uart": str(dev.dir / "devboard-uart.tty")},
+                scene=scene,
+                log=lambda text: print(f"[{dev.name}] devboard: {text}",
+                                       flush=True))
+        except OSError as e:
+            sys.exit(f"[{dev.name}] devboard: {e} (--gdb-port and "
+                     "--uart-port take another port, 0 any free one)")
+        name = {"blackmagic": "Black Magic Probe (its stock firmware)",
+                "marauder": "ESP32 Marauder"}[args.firmware]
+        print(f"[{dev.name}] the Wi-Fi Developer Board is on the header, "
+              f"with {name}:", flush=True)
+        for line in board.where():
+            print(f"[{dev.name}]   {line}", flush=True)
+        if args.firmware == "blackmagic":
+            port = board.gdb_listener.port if board.listeners else 2345
+            print(f"[{dev.name}]   gdb: target extended-remote "
+                  f"localhost:{port}, then monitor swdp_scan and attach 1 "
+                  f"(in a firmware's tree: ./fbt blackmagic "
+                  f"BLACKMAGIC=localhost:{port})", flush=True)
+        print(f"[{dev.name}]   Ctrl-C pulls it out", flush=True)
+        signal.signal(signal.SIGTERM, lambda *_: board.stop())
+        gone = not board.run(args.seconds)
+    finally:
+        if board:
+            board.close()
+        leave_port(lock)
+    if gone:
+        print(f"[{dev.name}] devboard: the device stopped", file=sys.stderr)
+        return 1
+    print(f"[{dev.name}] the Wi-Fi Developer Board is out", flush=True)
+    return 0
+
 def cmd_cli(args):
     dev = Device(args.device)
     cli = open_cli(dev, prompt=bool(args.commands), timeout=args.timeout)
@@ -7843,6 +8006,48 @@ def main():
                    metavar="S", help="keep the link for so many seconds "
                                      "(default 1)")
     p.set_defaults(func=cmd_expansion)
+
+    p = sub.add_parser(
+        "devboard", help="put the Wi-Fi Developer Board on a running "
+        "device's GPIO header: its stock Black Magic Probe (a GDB server "
+        "for ./fbt flash and debugging, and the firmware's log) or ESP32 "
+        "Marauder (for the WiFi Marauder app)",
+        description="The ESP32-S2 board that plugs into the header, as a "
+        "program here at the other end of its pins: 13 and 14 are the "
+        "board's UART, 10 and 12 its probe's SWD.  With its stock firmware "
+        "(--firmware blackmagic, the default) it is a debug probe: a GDB "
+        "server on TCP port 2345 and on a USB serial port "
+        "(devices/NAME/devboard-gdb.tty), where `monitor swdp_scan` finds "
+        "the STM32WB55 and `attach 1` halts it, `load` writes the flash, "
+        "and a BKPT halts the processor as on SWD; and the Flipper's USART "
+        "at 230400 baud on TCP port 3456 and devices/NAME/devboard-uart.tty. "
+        "With --firmware marauder it is ESP32 Marauder's command line at "
+        "115200 baud, as the WiFi Marauder app drives it, with the access "
+        "points and stations of --scene around it.  It stays until Ctrl-C "
+        "or --for, or until the device stops.  docs/DEVBOARD.md has all of "
+        "it.")
+    p.add_argument("--firmware", choices=("blackmagic", "marauder"),
+                   default="blackmagic",
+                   help="what the board runs (default: blackmagic, as it "
+                        "ships)")
+    p.add_argument("--gdb-port", type=int, default=2345, metavar="PORT",
+                   help="blackmagic: the GDB server's TCP port (default "
+                        "2345, the board's; 0: any free one; -1: none)")
+    p.add_argument("--uart-port", type=int, default=3456, metavar="PORT",
+                   help="blackmagic: the UART bridge's TCP port (default "
+                        "3456, the board's; 0: any free one; -1: none)")
+    p.add_argument("--listen", default="127.0.0.1", metavar="HOST",
+                   help="where those listen (default 127.0.0.1; 0.0.0.0 "
+                        "for other computers, as on the board's Wi-Fi)")
+    p.add_argument("--scene", metavar="FILE",
+                   help="marauder: the access points, stations and probe "
+                        "requests around the board, as JSON "
+                        "(examples/devboard/scene.json; default: a few "
+                        "built in)")
+    p.add_argument("--for", dest="seconds", type=float, metavar="S",
+                   help="pull it out after so many seconds (default: at "
+                        "Ctrl-C)")
+    p.set_defaults(func=cmd_devboard)
 
     p = sub.add_parser(
         "i2c", help="the I2C bus of a running device's GPIO header: the "

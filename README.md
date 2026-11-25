@@ -541,6 +541,7 @@ picture of the save to the pixel and the tag, and goes on with Pause.
 | `uart` \| `uart send TEXT [--expect TEXT]` \| `uart wait TEXT` \| `uart term` | the serial port on pins 15 and 16 of its header: where it goes; send to the app that has it open, and wait for its answer; wait for what the app sends; a terminal on it. `--port usart`: the one on pins 13 and 14 |
 | `uart --line-baud N` \| `uart --line-baud auto` | the baud rate of what is wired to that port, from then on: with another than the firmware's, each side takes the other's bytes as a UART at the wrong speed does (`auto`: the firmware's own, whatever it is) |
 | `expansion [--rpc] [--baud N] [--for S] [--port P]` | be an expansion module on its header, to the firmware's expansion service: the call, the baud rate, heartbeats, an RPC session; every frame printed |
+| `devboard [--firmware blackmagic\|marauder] [--gdb-port P] [--uart-port P] [--scene FILE]` | the Wi-Fi Developer Board on its header: its stock Black Magic Probe (a GDB server for `./fbt flash` and debugging, and the firmware's log), or ESP32 Marauder for the WiFi Marauder app ([docs/DEVBOARD.md](docs/DEVBOARD.md)) |
 | `run --i2c TYPE@ADDRESS[,NAME=VALUE]` | start with a device on the I2C bus of its header (pins 15 and 16): `--i2c tmp105@0x48,temperature=23.5`, `--i2c eeprom@0x50`; once for each device. `run --i2c help` lists the types |
 | `i2c` \| `i2c ADDRESS` \| `i2c ADDRESS NAME` \| `i2c ADDRESS NAME VALUE` | that bus: its devices with their values, and what the firmware called; one device; one value, bare; set a value while the firmware runs. `i2c --json`: the bus and its devices' values for a program |
 | `i2c record OUT.txt` \| `i2c record stop` \| `i2c watch [ADDRESS]` | every transfer on that bus, a line for each START with its time: the address called, the bytes written or read; into a text file, or printed as it happens |
@@ -3122,6 +3123,33 @@ it says `Found Winbond device` and `Device ID: W25Q32`.
 this (the bus by its name, the chip selects, what was clocked). On an emulator that
 was built before, `spi` says that it needs a newer one.
 
+### The Wi-Fi Developer Board
+
+`./flipperemu devboard` plugs an emulated Wi-Fi Developer Board (Flipper Devices'
+ESP32-S2 board) into a running device's header: its UART on pins 13 and 14, its
+probe's SWD on pins 10 and 12. With its stock firmware, Black Magic Probe, it is a
+debug probe for the Flipper: a GDB server on TCP port 2345 (the board's Wi-Fi port)
+and on a USB serial port, and the firmware's log at 230400 baud on TCP port 3456.
+
+```sh
+./flipperemu devboard                          # as it ships: Black Magic Probe
+./fbt blackmagic BLACKMAGIC=localhost:2345     # in a firmware's tree: gdb, attached
+./fbt flash SWD_TRANSPORT=blackmagic_wifi SWD_TRANSPORT_SERIAL=127.0.0.1
+nc localhost 3456                              # the firmware's log, as over the board's Wi-Fi
+./flipperemu devboard --firmware marauder      # ESP32 Marauder, for the WiFi Marauder app
+```
+
+`monitor swdp_scan` finds the STM32WB55 only with Debug on (Settings > System >
+Debug), as on a real Flipper. `load` writes the flash in pages and keeps it in the
+flash's image. Breakpoints and watchpoints are the processor's six and four, and a
+BKPT halts the processor as on SWD, so the firmware's own debugger hooks (the
+loader's stop where an app starts, the crash handler's) work. With Marauder, a scan
+finds the access points and stations of a scene (`--scene`, a JSON file), and the
+app's lists, selections and attacks work on them. Nothing goes on any air.
+[docs/DEVBOARD.md](docs/DEVBOARD.md) has all of it. `scripts/devboard_selftest.py`
+tests the board against a real gdb and a stock QEMU, and `scripts/devboard_check.py
+FIRMWARE` tests it on the emulator.
+
 ### Bluetooth
 
 CPU2 runs ST's BLE stack, as on a Flipper from the factory: version 1.20.0, BLE Light,
@@ -3692,10 +3720,12 @@ docs/BRINGUP_LOG.md    every bug found on the way (incl. the QEMU fixes and the 
 docs/RADIO_LINK.md     the protocol between an emulated radio and a real one
 docs/PANEL_LINK.md     the protocol between the emulator and the window
 docs/DEVELOPING.md     writing an app or a firmware with it: ufbt, fbt, gdb, the loop
+docs/DEVBOARD.md       the Wi-Fi Developer Board: Black Magic Probe and Marauder
 examples/hello/        an app to try that with
 examples/uart/         a script for the serial port on pins 15 and 16
 examples/i2c/          a script and an app for a sensor and an EEPROM on the I2C bus
 examples/spi/          a script for a serial flash on the SPI bus
+examples/devboard/     a scene for Marauder, and a script that drives it
 flipperemu             launcher / device manager
 qemu/hw/arm/flipper/   the QEMU machine + STM32WB55 SoC + board devices (C)
 qemu/plugins/          the emulator's coverage plugin (C)
@@ -3712,7 +3742,8 @@ qemu/patches/          fixes to upstream QEMU (SysTick, SD over SPI, open-drain 
 scripts/               setup_qemu.sh, fetch_firmware.py, make_sdcard.py, fe_monitor.py,
                        fe_cli.py, fe_files.py (files on the card), fe_apps.py
                        (apps and the loader), fe_expansion.py (an expansion
-                       module's side of its protocol), fe_ir.py,
+                       module's side of its protocol), fe_devboard.py (the
+                       Wi-Fi Developer Board), fe_ir.py,
                        fe_subghz.py, fe_sdr.py (real radios),
                        fe_nfc_link.py (cards from programs), fe_pm3.py (Proxmark3),
                        fe_enclave.py (the enclave's keys and ciphers), fe_gdb.py
