@@ -120,6 +120,21 @@ own updater installs it (Device &gt; Update with a package), and <b>F6</b>
 does that again with the same package, after a new build.</p>"""
 
 
+# what a module on the GPIO header is called, by its kind in module.json
+MODULE_NAMES = {"devboard": "The Wi-Fi Developer Board"}
+
+
+def pid_alive(pid):
+    """A process with that number runs (one of another user's counts)"""
+    try:
+        os.kill(int(pid), 0)
+    except (TypeError, ValueError, ProcessLookupError, OverflowError):
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def config_path():
     if os.environ.get("FLIPPEREMU_GUI_CONFIG"):
         return pathlib.Path(os.environ["FLIPPEREMU_GUI_CONFIG"])
@@ -277,6 +292,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.held_args = {}             # kind: the command's arguments
         self.switches = {}              # nfc field, rfid reader/noise, as set
         self.after_hello = []           # commands for a Flipper switched on
+        self.module_key = None          # module.json as last read: its stamp
+        self.module_read = {}           # ... and what it said
+        self.module_menu = None         # the menu of the module on the header
         self.links = {}                 # kind: W.Background
         self.remotes = {}               # .ir path: W.RemoteWindow
         self.readers = {}               # kind: its tx before a virtual reader
@@ -1047,6 +1065,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.scan_subghz()
         if self.recording is not None:
             self.show_recording()
+        self.read_module()
 
     def qemu_gone(self, proc):
         s = self.session
@@ -2417,11 +2436,92 @@ class MainWindow(QtWidgets.QMainWindow):
     def on_port_click(self, zone, pos):
         if zone == "ir":
             self.menu_ir.popup(pos)
+        elif zone == "module":
+            self.show_module_menu(pos)
 
     def on_context_menu(self, zone, pos):
+        if zone == "module":
+            return self.show_module_menu(pos)
         menu = {"usb": self.menu_usb, "sd": self.menu_sd, "ir": self.menu_ir,
                 "gpio": self.menu_gpio}.get(zone, self.menu_device)
         menu.popup(pos)
+
+    # ------------------------------------------- a module on the GPIO header
+
+    def read_module(self):
+        """What is on the GPIO header, from devices/NAME/module.json: the
+        command that puts a module there (`flipperemu devboard`, ...) writes
+        it, again when what the module does changes, and takes it away.  A
+        file whose process is gone is no module."""
+        path = self.dir / "module.json"
+        try:
+            st = path.stat()
+            key = (st.st_mtime_ns, st.st_size)
+        except OSError:
+            key = None
+        if key != self.module_key:
+            self.module_key = key
+            try:
+                info = json.loads(path.read_text()) if key else {}
+            except (OSError, ValueError):
+                info = {}
+            self.module_read = info if isinstance(info, dict) else {}
+        info = self.module_read
+        if info and not pid_alive(info.get("pid")):
+            info = {}
+        kind = info.get("module") or None
+        if kind != self.view.module:
+            name = MODULE_NAMES.get(kind or self.view.module, "A module")
+            self.log.add(f"{name} is on the GPIO header." if kind else
+                         f"{name} is out of the GPIO header.", "you")
+        if self.view.set_module(kind, info):
+            QtCore.QTimer.singleShot(0, self.fit)
+
+    def show_module_menu(self, pos):
+        """The menu of the module on the header: what it is, what to do"""
+        kind, info = self.view.module, self.view.module_info
+        if not kind:
+            return
+        m = self.module_menu = QtWidgets.QMenu(self)
+        fill = getattr(self, f"fill_menu_{kind}", None)
+        if fill:
+            fill(m, info)
+        else:
+            m.addAction(MODULE_NAMES.get(kind, kind)).setEnabled(False)
+        m.addSeparator()
+        m.addAction("Pull it out").triggered.connect(
+            lambda _=False, pid=info.get("pid"): self.pull_module(pid))
+        m.popup(pos)
+
+    def pull_module(self, pid):
+        """Ends the command that has the module on the header, as Ctrl-C in
+        its terminal does"""
+        try:
+            os.kill(int(pid), signal.SIGTERM)
+        except (TypeError, ValueError, OSError) as e:
+            self.log.add(f"The module could not be pulled out: {e}", "error")
+
+    def fill_menu_devboard(self, m, info):
+        marauder = info.get("firmware") == "marauder"
+        m.addAction("The Wi-Fi Developer Board, with " +
+                    ("ESP32 Marauder" if marauder else "Black Magic Probe")
+                    ).setEnabled(False)
+        m.addAction(self.view.tip_devboard(info).split(": ", 1)[-1]
+                    .replace(". Click for its menu", "")).setEnabled(False)
+        copy = QtWidgets.QApplication.clipboard().setText
+        port = info.get("gdb_port")
+        if port:
+            m.addSeparator()
+            for text, line in (
+                    ("Copy gdb's target command",
+                     f"target extended-remote localhost:{port}"),
+                    ("Copy fbt's command (in a firmware's tree)",
+                     f"./fbt blackmagic BLACKMAGIC=localhost:{port}")):
+                m.addAction(text).triggered.connect(
+                    lambda _=False, line=line: copy(line))
+        if info.get("uart_port"):
+            m.addAction("Copy the UART bridge's address").triggered.connect(
+                lambda _=False: copy(f"localhost:{info['uart_port']}"))
 
     # ----------------------------------------------------- the GPIO header
 
