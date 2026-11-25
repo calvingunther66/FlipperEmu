@@ -106,7 +106,7 @@ def main():
                     help="the firmware has Flipware's coprocessor service")
     ap.add_argument("--timeout", type=float, default=120)
     args = ap.parse_args()
-    check_limit.start()
+    check_limit.arm(900)
     bench = Bench("vgm-check", args.firmware, args.timeout)
     tmp = pathlib.Path(tempfile.mkdtemp())
     text = tmp / "mirror.txt"
