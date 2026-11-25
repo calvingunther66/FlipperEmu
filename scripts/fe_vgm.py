@@ -658,16 +658,19 @@ class Vgm:
             event = x.fields(main[F_INPUT])
             self.last_input = (event.get(1, 0), event.get(2, 0))
 
-    def virtual_display(self, picture):
+    def virtual_display(self, picture, until=None):
         """Show a picture on the Flipper's screen until a button is released
-        there, as the VGM does once a power-up"""
+        there, as the VGM does once a power-up.  False: `until()` came
+        first (the display is left as it is: the module is going)"""
         first = field(1, picture) + field(2, 0)
         self.request(F_DISPLAY_START, field(1, first) + field(2, 1))
         self.log("virtual display: the VGM's picture is on the Flipper's "
                  "screen until a button is released there")
         self.last_input = None
         while True:
-            main = self.message(3600)
+            if until and until():
+                return False
+            main = self.message(0.1)
             if main is None:
                 continue
             if content_of(main) == F_INPUT:
@@ -680,6 +683,7 @@ class Vgm:
             else:
                 self.unasked(main)
         self.request(F_DISPLAY_STOP)
+        return True
 
     def stream_screen(self):
         self.request(F_STREAM_START)
@@ -698,7 +702,8 @@ class Vgm:
                 self.control(x.START_RPC)
                 self.log(f"linked at {rate} baud, RPC session started")
                 if not shown:
-                    self.virtual_display(splash_picture())
+                    if not self.virtual_display(splash_picture(), until):
+                        break
                     shown = True
                 self.stream_screen()
                 made += 1

@@ -5537,23 +5537,38 @@ def vgm_imu(dev, sets):
         m.close()
 
 
-def vgm_reset_line(dev):
+def vgm_reset_line(dev, every=0.5):
     """What the Flipper does with the VGM's RUN (pin 15, PC1) and USB_BOOT
     (pin 16, PC0) lines, which it pulls low through the module's MOSFETs:
-    a function -> "run", "reset" (RUN low) or "boot" (BOOT low)"""
-    state = {"m": None}
+    a function -> "run", "reset" (RUN low) or "boot" (BOOT low).
+
+    The monitor takes one client at a time, and others (`shot`, `press`,
+    `cli`) need it while the module runs: each look connects, reads the
+    header and lets go, at most every `every` seconds, and a monitor that
+    is busy now is looked at again next time."""
+    from fe_monitor import Monitor
+    state = {"at": 0.0, "was": "run"}
 
     def look():
+        now = time.monotonic()
+        if now - state["at"] < every:
+            return state["was"]
+        state["at"] = now
         try:
-            if state["m"] is None:
-                state["m"] = open_monitor(dev)
-            pins = {p["number"]: p for p in read_header(state["m"]) or ()}
+            m = Monitor(str(dev.monitor), timeout=2.0, wait=0.1)
         except (OSError, ConnectionError):
-            return "run"
+            return state["was"]
+        try:
+            pins = {p["number"]: p for p in read_header(m) or ()}
+        except (OSError, ConnectionError):
+            return state["was"]
+        finally:
+            m.close()
         low = {n for n in (15, 16) if n in pins and pins[n]["mode"] ==
                "output" and pins[n]["level"] == "low"}
-        return "reset" if 15 in low else "boot" if 16 in low else "run"
-    return look, state
+        state["was"] = "reset" if 15 in low else "boot" if 16 in low else "run"
+        return state["was"]
+    return look
 
 
 def cmd_vgm(args):
@@ -5602,7 +5617,7 @@ def cmd_vgm(args):
     except PortBusy as e:
         sys.exit(f"[{dev.name}] {e}")
     line = None
-    look, held = vgm_reset_line(dev)
+    look = vgm_reset_line(dev)
     t0 = time.monotonic()
 
     def log(text):
@@ -5654,13 +5669,7 @@ def cmd_vgm(args):
                             continue
                     splash = not args.no_splash     # a power-up again
                     continue
-                last = [time.monotonic()]
-
                 def stop():
-                    now = time.monotonic()
-                    if now - last[0] < 0.25:
-                        return False
-                    last[0] = now
                     return look() != "run"
                 left = None if end is None else max(0.0, end -
                                                     time.monotonic())
@@ -5673,8 +5682,6 @@ def cmd_vgm(args):
         if line:
             line.close()
         leave_port(lock)
-        if held["m"]:
-            held["m"].close()
     done = ", ".join(f"{n} {fe_vgm.TASKS[t]}" for t, n in
                      sorted(vgm.jobs.done.items()))
     print(f"[{dev.name}] the VGM is gone: {hdmi.frames} frame"
