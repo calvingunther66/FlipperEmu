@@ -25,13 +25,15 @@ writes the mirrored screen as text, as `shot --text` does).
 ## In the window
 
 While `vgm` runs, the window draws the module on the back of the Flipper,
-its top edge above the GPIO header with the HDMI and USB-C ports in it.
+its top edge above the GPIO header with the HDMI and USB-C ports in it,
+an HDMI cable in the one.
 Its light says what it does: amber while it calls the Flipper, blue while it
 is linked or its picture is on the Flipper's screen, green while the screen
-goes to HDMI (an HDMI cable is in its port then), red while the Flipper holds
+goes to HDMI, red while the Flipper holds
 RUN low, purple in the UF2 boot loader. The HDMI dock (View > The Video Game
-Module's HDMI, Ctrl+Shift+H) shows the picture it sends, and comes up by
-itself the first time a module is on the header. GPIO > Plug in the Video
+Module's HDMI, Ctrl+Shift+H) shows the picture it sends ("no signal" while
+its RP2040 is in reset or its boot loader). It comes up by itself when a
+module comes on the header, and goes again with it. GPIO > Plug in the Video
 Game Module starts `vgm` from the window; a click on the module has its
 menu, with Pull it out. `vgm` says what it does in the device's
 module.json, the file the Wi-Fi Developer Board uses too

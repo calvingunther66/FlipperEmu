@@ -4,7 +4,7 @@
 (module "vgm", its "state" and its "hdmi" picture).  draw() puts the module
 where a real one is: on the back of the Flipper, plugged into the GPIO header,
 its top edge standing above the Flipper's with the HDMI and USB-C ports in
-it, an HDMI cable in its port while it has a picture to send.  Its light says
+it, an HDMI cable in its port.  Its light says
 what it does.  HdmiDock shows the picture that goes out on HDMI.
 
 The drawing is in the units of fe_gui_view (one LCD pixel) and in the theme's
@@ -41,7 +41,7 @@ STATES = {
     "boot": ("#ae3ec9", "in its UF2 boot loader: the Flipper holds "
                         "USB_BOOT (pin 16) low"),
 }
-SENDS = ("linked", "splash", "streaming")       # its HDMI cable is in
+DARK = ("reset", "boot")        # its RP2040 runs nothing: no picture
 
 
 def tip(info):
@@ -122,23 +122,23 @@ def draw(p, t, info, hover):
     else:
         p.setBrush(mix(t["shade"], "#000000", 0.45))
     p.drawEllipse(LIGHT, 1.8, 1.8)
-    if state in SENDS:                          # an HDMI cable, up and away
-        plug = QRectF(HDMI.left() - 2.5, HDMI.top() - 9, HDMI.width() + 5, 9.5)
-        wire = QPainterPath()
-        wire.moveTo(plug.center().x(), plug.top())
-        top = SHELL.top() - 30
-        wire.cubicTo(QPointF(plug.center().x(), plug.top() - 8),
-                     QPointF(plug.center().x() - 26, top + 16),
-                     QPointF(plug.center().x() - 34, top))
-        p.setPen(QPen(QColor("#2b2c31"), 4.4, Qt.SolidLine, Qt.RoundCap))
-        p.setBrush(Qt.NoBrush)
-        p.drawPath(wire)
-        p.setPen(Qt.NoPen)
-        p.setBrush(QColor("#44464d") if not hover else QColor("#5a5d66"))
-        p.drawRoundedRect(plug, 2.2, 2.2)
-        p.setBrush(QColor("#c3c6cd"))
-        p.drawRect(QRectF(HDMI.left() + 1, HDMI.top() - 0.6,
-                          HDMI.width() - 2, 1.2))
+    # its HDMI cable, up and away (plugged in, whatever the module does)
+    plug = QRectF(HDMI.left() - 2.5, HDMI.top() - 9, HDMI.width() + 5, 9.5)
+    wire = QPainterPath()
+    wire.moveTo(plug.center().x(), plug.top())
+    top = SHELL.top() - 30
+    wire.cubicTo(QPointF(plug.center().x(), plug.top() - 8),
+                 QPointF(plug.center().x() - 26, top + 16),
+                 QPointF(plug.center().x() - 34, top))
+    p.setPen(QPen(QColor("#2b2c31"), 4.4, Qt.SolidLine, Qt.RoundCap))
+    p.setBrush(Qt.NoBrush)
+    p.drawPath(wire)
+    p.setPen(Qt.NoPen)
+    p.setBrush(QColor("#44464d") if not hover else QColor("#5a5d66"))
+    p.drawRoundedRect(plug, 2.2, 2.2)
+    p.setBrush(QColor("#c3c6cd"))
+    p.drawRect(QRectF(HDMI.left() + 1, HDMI.top() - 0.6,
+                      HDMI.width() - 2, 1.2))
     p.restore()
 
 
@@ -170,8 +170,16 @@ class HdmiDock(QtWidgets.QDockWidget):
         self.picture.setPixmap(QtGui.QPixmap())
         self.picture.setText(text)
 
-    def show_file(self, path):
-        """Look at the picture again (cheap when it has not changed)"""
+    def show_file(self, path, state=None):
+        """Look at the picture again (cheap when it has not changed); a
+        module whose RP2040 runs nothing sends no signal"""
+        if path and state in DARK:
+            if self.path != "dark":
+                self.path, self.stamp = "dark", None
+                self.say("No signal: the module's RP2040 "
+                         + ("is in reset" if state == "reset"
+                            else "waits in its UF2 boot loader"))
+            return
         if not path:
             if self.path:
                 self.path, self.stamp = None, None

@@ -11,8 +11,8 @@ Game Module starts `flipperemu vgm`: the window draws the module on the back
 of the Flipper, its top edge above the header (the view grows by it), and
 says so in its console.  Its picture is on the Flipper's screen and its light
 is blue; a button released ends it, and the screen goes to HDMI: the light
-is green, an HDMI cable is in its port, and the HDMI dock shows the picture.
-The firmware's RUN line held low turns the light red, and released, the
+is green, and the HDMI dock shows the picture.  The firmware's RUN line
+held low turns the light red and HDMI has no signal, and released, the
 module starts again with its picture.  Its menu's Pull it out ends `vgm`
 and the window shrinks back.  Pictures of each step go to --out.  Exit
 status 0 = pass.
@@ -168,6 +168,9 @@ class Driver:
         self.fe("cli", "gpio set PC1 0")
         check("RUN held low: the light is red",
               self.until(lambda: self.state() == "reset", 15), v.module_info)
+        check("... and HDMI has no signal", self.until(
+            lambda: "No signal" in w.hdmi.picture.text(), 3),
+            w.hdmi.picture.text())
         self.spin(0.5)
         self.shot("3-reset")
         self.fe("cli", "gpio set PC1 1")
@@ -191,6 +194,8 @@ class Driver:
         check("Pull it out: the window draws no module, as small as before",
               self.until(lambda: v.module is None and v.height() == h0, 10),
               f"{v.module} {v.height()}")
+        check("... and the HDMI dock goes with it",
+              self.until(lambda: w.hdmi.isHidden(), 3))
         check("... and its console says the module ended well",
               self.until(lambda: "Ended: the Video Game Module"
                          in self.console(), 10), self.console()[-1500:])

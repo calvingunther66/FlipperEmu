@@ -316,7 +316,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.log = W.LogDock(self)
         self.fwlog = W.FirmwareLogDock(self.dir / "uart.log", self)
         self.hdmi = fe_gui_vgm.HdmiDock(self)     # the VGM's picture
-        self.hdmi_shown = False         # ... shown once a VGM came
+        self.hdmi_shown = False         # ... shown for the VGM there
+        self.hdmi_auto = False          # ... and opened by it
         self.front = {}                 # dock: it is the tab in front
         self.build()
         self.build_menus()
@@ -2512,13 +2513,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self.log.add(f"The module could not be pulled out: {e}", "error")
 
     def show_hdmi(self, info):
-        """The VGM's HDMI picture in its dock: shown when a VGM first comes
-        on the header, and looked at again while it is there"""
+        """The VGM's HDMI picture in its dock: shown when a VGM comes on the
+        header, looked at again while it is there, "no signal" while its
+        RP2040 does not run, and closed again with the module when it was
+        opened by it"""
         if info and not self.hdmi_shown:
             self.hdmi_shown = True
-            self.show_dock(self.hdmi)
+            if self.hdmi.isHidden():
+                self.hdmi_auto = True
+                self.show_dock(self.hdmi)
+        elif not info and self.hdmi_shown:
+            self.hdmi_shown = False
+            if self.hdmi_auto and not self.hdmi.isHidden():
+                self.hdmi.hide()
+                QtCore.QTimer.singleShot(0, self.fit)
+            self.hdmi_auto = False
         if not self.hdmi.isHidden():
-            self.hdmi.show_file((info or {}).get("hdmi"))
+            self.hdmi.show_file((info or {}).get("hdmi"),
+                                (info or {}).get("state"))
 
     def fill_menu_vgm(self, m, info):
         m.addAction("The Video Game Module").setEnabled(False)
@@ -2527,7 +2539,8 @@ class MainWindow(QtWidgets.QMainWindow):
         m.addSeparator()
         m.addAction("Show its HDMI picture").triggered.connect(
             lambda _=False: (self.show_dock(self.hdmi),
-                             self.hdmi.show_file(info.get("hdmi"))))
+                             self.hdmi.show_file(info.get("hdmi"),
+                                                 info.get("state"))))
         if info.get("hdmi"):
             m.addAction("Copy where the picture is written").triggered.connect(
                 lambda _=False: QtWidgets.QApplication.clipboard().setText(
