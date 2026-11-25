@@ -5,7 +5,9 @@ what the front-panel link reports: the picture on the LCD, the backlight, the
 LED, the vibration motor, the speaker.  It turns the mouse and the keyboard
 into button presses, and its ports are where a Flipper has them, to click:
 the USB plug in its right side, the infrared window in the upper face of its
-nose, the GPIO sockets along the top, the microSD card at the bottom right.
+nose, the GPIO sockets along the top, the microSD card at the bottom right.  A
+module on the header (set_module) stands up from the top edge, and the view
+grows by its height.
 
 The drawing is this project's own, with the proportions of the real thing: a
 body that narrows to a blunt nose at the left and has its top right corner cut
@@ -76,6 +78,18 @@ ZONES = {       # what is not round: where a click means it
     "sd": QtGui.QPolygonF(QRectF(SD_X - 4, BY + BH - 7, SD_W + 8,
                                  VIEW_H - BY - BH + 7)),
 }
+
+# A module on the GPIO header stands this far above the body's box, in LCD
+# pixels (the view grows by it); one that is not here is not drawn
+MODULE_ROOM = {"devboard": 84}
+
+# The Wi-Fi Developer Board: its board, which stands up from the header, as
+# wide as the header's sockets and a little more
+DEVBOARD = QRectF(GPIO_PINS[0] - 11, -MODULE_ROOM["devboard"] + 3,
+                  GPIO_PINS[17] - GPIO_PINS[0] + 22,
+                  MODULE_ROOM["devboard"] + BY - 7)
+DEVBOARD_PCB = "#1c1e23"                        # its solder mask, and ...
+DEVBOARD_INK = "#e4e5e9"                        # ... the silkscreen on it
 
 # Its name, in letters of this project's own: strokes on a grid, (x, y) with
 # y down, each letter LETTER_H high
@@ -314,6 +328,9 @@ class FlipperView(QtWidgets.QWidget):
         self.header = {}                # GPIO pin number: (level, held)
         self.header_duty = {}           # ... with a PWM: the high part, 0 to 1
         self.pin_tips = {}              # ... and what to say of it
+        self.module = None              # what is on the header: its kind
+        self.module_info = {}           # ... and what it says of itself
+        self.top = 0                    # ... and how far it stands above
         self.shake = 0
         self.clock = QtCore.QElapsedTimer()
         self.clock.start()
@@ -324,6 +341,11 @@ class FlipperView(QtWidgets.QWidget):
         self.setMouseTracking(True)
         self.setContextMenuPolicy(Qt.DefaultContextMenu)
         self.setFixedSize(VIEW_W * self.k, VIEW_H * self.k)
+
+    def view_h(self):
+        """How high the picture is, in LCD pixels: a module on the header
+        makes it higher"""
+        return VIEW_H + self.top
 
     # ---- what the window tells it
 
@@ -339,7 +361,7 @@ class FlipperView(QtWidgets.QWidget):
 
     def set_scale(self, k):
         if self._set(k=k):
-            self.setFixedSize(VIEW_W * k, VIEW_H * k)
+            self.setFixedSize(VIEW_W * k, self.view_h() * k)
 
     def set_theme(self, name):
         self._set(theme=THEMES.get(name, THEMES["white"]))
@@ -384,6 +406,20 @@ class FlipperView(QtWidgets.QWidget):
         self.pin_tips = dict(tips)
         self._set(header=dict(pins), header_duty=dict(duty or {}))
 
+    def set_module(self, kind, info=None):
+        """What is on the GPIO header: its kind ("devboard", ...; None for
+        nothing) and what it says of itself (its module.json, as a dict).
+        A kind this view has no picture of is not drawn, and takes no room.
+        -> True when the view's size changed (the window then fits it)"""
+        top = MODULE_ROOM.get(kind, 0) if kind else 0
+        self._set(module=kind or None, module_info=dict(info or {}))
+        if top == self.top:
+            return False
+        self.top = top
+        self.setFixedSize(VIEW_W * self.k, self.view_h() * self.k)
+        self.update()
+        return True
+
     def set_power(self, power, *hint):
         """'on', or what else it is, with what to say on the dark screen"""
         self._set(power=power, hint=tuple(hint))
@@ -416,11 +452,12 @@ class FlipperView(QtWidgets.QWidget):
     def picture(self, scale=None):
         """The whole Flipper as it is drawn now, on nothing."""
         k = scale or self.k
-        img = QtGui.QImage(VIEW_W * k, VIEW_H * k,
+        img = QtGui.QImage(VIEW_W * k, self.view_h() * k,
                            QtGui.QImage.Format_ARGB32_Premultiplied)
         img.fill(Qt.transparent)
         p = QPainter(img)
         p.scale(k, k)
+        p.translate(0, self.top)
         self.draw(p, k)
         p.end()
         return img
@@ -455,8 +492,9 @@ class FlipperView(QtWidgets.QWidget):
             self.mouse_key = None
 
     def zone_at(self, pos):
-        """What is under a point of the widget: a key, a zone, or None"""
-        x, y = pos.x() / self.k, pos.y() / self.k
+        """What is under a point of the widget: a key, a zone ("module": the
+        module on the header), or None"""
+        x, y = pos.x() / self.k, pos.y() / self.k - self.top
         dx, dy = x - PAD.x(), y - PAD.y()
         d = math.hypot(dx, dy)
         if d <= OK_R + 1:
@@ -470,7 +508,15 @@ class FlipperView(QtWidgets.QWidget):
         for name, zone in ZONES.items():
             if zone.containsPoint(QPointF(x, y), Qt.OddEvenFill):
                 return name
+        area = self.module_area()
+        if area is not None and area.contains(QPointF(x, y)):
+            return "module"
         return None
+
+    def module_area(self):
+        """Where the module on the header is (a QRectF, in the body's
+        coordinates), or None"""
+        return {"devboard": DEVBOARD}.get(self.module) if self.top else None
 
     def pin_at(self, pos):
         """The GPIO pin under a point of the widget, by its number on the
@@ -484,7 +530,7 @@ class FlipperView(QtWidgets.QWidget):
     def pin_point(self, number):
         """Where that pin is in the widget (for a test, to click it)"""
         return QtCore.QPoint(round(GPIO_PINS[number - 1] * self.k),
-                             round((BY + 2.4) * self.k))
+                             round((BY + 2.4 + self.top) * self.k))
 
     def mousePressEvent(self, e):
         if e.button() != Qt.LeftButton:
@@ -564,6 +610,9 @@ class FlipperView(QtWidgets.QWidget):
         off = self.power != "on"
         if zone == "gpio" and self.pin_tips.get(pin):
             return self.pin_tips[pin]
+        if zone == "module":
+            tip = getattr(self, f"tip_{self.module}", None)
+            return tip(self.module_info) if tip else ""
         return {
             "up": "Up (↑)", "down": "Down (↓)", "left": "Left (←)",
             "right": "Right (→)", "ok": "OK (Enter or Space)",
@@ -590,6 +639,7 @@ class FlipperView(QtWidgets.QWidget):
         if self.shake:
             dx, dy = ((0.7, 0), (0, 0.5), (-0.7, 0), (0, -0.5))[self.shake - 1]
             p.translate(dx, dy)
+        p.translate(0, self.top)
         self.draw(p, self.k)
         p.end()
 
@@ -599,6 +649,10 @@ class FlipperView(QtWidgets.QWidget):
         self.draw_behind(p, t)
         self.draw_cable(p, t)
         self.draw_body(p, t)
+        if self.top:                    # on the header, over its sockets
+            draw = getattr(self, f"draw_{self.module}", None)
+            if draw:
+                draw(p, t, self.module_info)
         self.draw_screen(p, t, k)
         self.draw_led(p, t)
         self.draw_keys(p, t)
@@ -910,3 +964,204 @@ class FlipperView(QtWidgets.QWidget):
             for r in (2.4, 4.6, 6.8):
                 p.drawArc(QRectF(cx - 1.4 - r, cy - r, 2 * r, 2 * r),
                           -40 * 16, 80 * 16)
+
+    # ---- modules on the header
+
+    def tip_devboard(self, info):
+        """What to say of the Wi-Fi Developer Board under the pointer"""
+        if info.get("firmware") == "marauder":
+            mode = info.get("mode") or ""
+            doing = ("it scans" if mode.startswith(("scan", "sniff"))
+                     else f"it runs {mode}" if mode else "it waits")
+            return (f"The Wi-Fi Developer Board, with ESP32 Marauder: {doing}, "
+                    f"{info.get('aps', 0)} access points found. Click for its "
+                    "menu")
+        bits = []
+        if info.get("gdb_port"):
+            gdb = {"attached": "attached to the Flipper",
+                   "connected": "connected"}.get(info.get("gdb"), "none yet")
+            bits.append(f"gdb at localhost:{info['gdb_port']} ({gdb})")
+        if info.get("uart_port"):
+            bits.append(f"the UART bridge at localhost:{info['uart_port']}")
+        return ("The Wi-Fi Developer Board, with Black Magic Probe"
+                + (": " + ", ".join(bits) if bits else "") + ". Click for its "
+                "menu")
+
+    def devboard_led(self, info):
+        """The colour its LED is lit in, in this picture: what it does"""
+        if info.get("firmware") == "marauder":
+            mode = info.get("mode") or ""
+            return ("#ff4655" if mode.startswith("attack") else
+                    "#2fd16b" if mode else "#3d8bff")
+        return {"attached": "#ffb72e", "connected": "#2fd16b"}.get(
+            info.get("gdb"), "#3d8bff")
+
+    def devboard_line(self, info):
+        """What it does, in a few words on the board"""
+        if info.get("firmware") == "marauder":
+            mode = info.get("mode") or ""
+            return (mode if mode else "idle") + f" · {info.get('aps', 0)} APs"
+        gdb = info.get("gdb") or ""
+        port = info.get("gdb_port")
+        return ((f"gdb :{port} " if port else "gdb ")
+                + {"attached": "attached", "connected": "connected"}.get(
+                    gdb, "waiting"))
+
+    def draw_devboard(self, p, t, info):
+        """The Wi-Fi Developer Board, standing up from the header: an ESP32-S2
+        module, its USB-C port in the top edge, BOOT and RESET, an LED"""
+        r = DEVBOARD
+        x0, y0 = r.x(), r.y()
+        ink = QColor(DEVBOARD_INK)
+        gold = t["pin"]
+        p.save()
+        p.setBrush(Qt.NoBrush)                  # the shadow it casts
+        for width, alpha in ((6, 5), (3.5, 9), (1.6, 14)):
+            p.setPen(QPen(QColor(0, 0, 0, alpha), width))
+            p.drawRoundedRect(r.translated(-0.5, 1.6), 3.5, 3.5)
+        mask = QtGui.QLinearGradient(0, r.top(), 0, r.bottom())
+        mask.setColorAt(0.0, mix(DEVBOARD_PCB, "#ffffff", 0.08))
+        mask.setColorAt(1.0, DEVBOARD_PCB)
+        p.setBrush(mask)
+        edge = "#3a3d45" if self.hover == "module" else "#0b0c0f"
+        p.setPen(QPen(QColor(edge), 0.8))
+        p.drawRoundedRect(r, 3.5, 3.5)
+        p.setPen(Qt.NoPen)
+
+        # copper under the mask: from the header up to the module
+        p.setPen(QPen(mix(DEVBOARD_PCB, "#ffffff", 0.07), 0.9, Qt.SolidLine,
+                      Qt.RoundCap, Qt.RoundJoin))
+        for i, x in enumerate(GPIO_PINS[:8]):
+            path = QPainterPath(QPointF(x, BY - 9))
+            path.lineTo(QPointF(x, y0 + 74 - i * 0.6))
+            path.lineTo(QPointF(x0 + 30 + i * 6, y0 + 70))
+            p.drawPath(path)
+        for i, x in enumerate(GPIO_PINS[8:12]):
+            path = QPainterPath(QPointF(x, BY - 9))
+            path.lineTo(QPointF(x, y0 + 62 + i * 2))
+            path.lineTo(QPointF(x0 + 96, y0 + 62 + i * 2))
+            p.drawPath(path)
+        p.setPen(Qt.NoPen)
+
+        for cx in (x0 + 7, r.right() - 7):      # its mounting holes
+            p.setBrush(gold)
+            p.drawEllipse(QPointF(cx, y0 + 7), 3.3, 3.3)
+            p.setBrush(QColor("#0a0a0c"))
+            p.drawEllipse(QPointF(cx, y0 + 7), 1.9, 1.9)
+
+        for x in GPIO_PINS:                     # the header: its pins' pads ...
+            p.setBrush(gold)
+            p.drawEllipse(QPointF(x, BY - 9.2), 1.7, 1.7)
+            p.setBrush(QColor("#0a0a0c"))
+            p.drawEllipse(QPointF(x, BY - 9.2), 0.7, 0.7)
+        for row in GPIO_ROWS:                   # ... and the plastic that goes
+            plug = QRectF(row.x() - 0.8, BY - 6.6, row.width() + 1.6, 7.6)
+            p.setBrush(QColor("#141416"))       # into the sockets
+            p.drawRoundedRect(plug, 0.9, 0.9)
+            p.setBrush(QColor("#2a2a2e"))
+            p.drawRect(QRectF(plug.x() + 0.6, plug.y() + 0.5,
+                              plug.width() - 1.2, 0.8))
+
+        # the ESP32-S2 module: its board, the antenna on it, its shield
+        module = QRectF(x0 + 19, y0 + 6, 74, 60)
+        p.setBrush(QColor("#25282f"))
+        p.drawRoundedRect(module, 1.2, 1.2)
+        p.setPen(QPen(gold, 1.0, Qt.SolidLine, Qt.FlatCap, Qt.MiterJoin))
+        p.setBrush(Qt.NoBrush)
+        zig = QPainterPath(QPointF(module.x() + 6, module.y() + 13))
+        x, up = module.x() + 6, True
+        while x < module.right() - 10:
+            zig.lineTo(QPointF(x, module.y() + (4 if up else 13)))
+            x += 4.2
+            zig.lineTo(QPointF(x, module.y() + (4 if up else 13)))
+            up = not up
+        p.drawPath(zig)
+        p.setPen(Qt.NoPen)
+        can = QRectF(module.x() + 3, module.y() + 17, module.width() - 6,
+                     module.height() - 20)
+        metal = QtGui.QLinearGradient(can.topLeft(), can.bottomRight())
+        metal.setColorAt(0.0, QColor("#e2e4e9"))
+        metal.setColorAt(0.55, QColor("#b9bdc5"))
+        metal.setColorAt(1.0, QColor("#9a9ea7"))
+        p.setBrush(metal)
+        p.drawRoundedRect(can, 1.4, 1.4)
+        p.setBrush(faded("#ffffff", 70))
+        p.drawRect(QRectF(can.x() + 2, can.y() + 1.2, can.width() - 4, 0.7))
+        font = QtGui.QFont(self.font())
+        font.setBold(True)
+        font.setPixelSize(7)
+        p.setFont(font)
+        p.setPen(QColor("#4d515a"))
+        p.drawText(can.adjusted(0, 6, 0, -14), Qt.AlignCenter, "ESP32-S2")
+        font.setBold(False)
+        font.setPixelSize(4.5)
+        p.setFont(font)
+        p.drawText(can.adjusted(0, 18, 0, -5), Qt.AlignCenter, "WROVER")
+        p.setPen(Qt.NoPen)
+
+        for i in range(5):                      # a few parts beside it
+            p.setBrush(QColor("#8c7a5c" if i % 2 else "#3b3226"))
+            part = QRectF(x0 + 188 + i * 7, y0 + 50, 3.6, 2.0)
+            p.drawRect(part)
+            p.setBrush(QColor("#c9ccd2"))
+            p.drawRect(QRectF(part.x(), part.y(), 0.7, 2.0))
+            p.drawRect(QRectF(part.right() - 0.7, part.y(), 0.7, 2.0))
+
+        # the USB-C port, in its top edge
+        usb = QRectF(x0 + 140, y0 - 2.2, 20, 8.4)
+        p.setBrush(QColor("#c3c6cd"))
+        p.drawRoundedRect(usb, 3.2, 3.2)
+        p.setBrush(QColor("#2a2b30"))
+        p.drawRoundedRect(usb.adjusted(1.6, 1.6, -1.6, -1.6), 2.2, 2.2)
+        p.setBrush(QColor("#5c5f68"))
+        p.drawRect(QRectF(usb.x() + 5, usb.center().y() - 0.6, 10, 1.2))
+
+        # the LED, lit for what it does (this picture's own colours)
+        led = QPointF(x0 + 150, y0 + 26)
+        lit = QColor(self.devboard_led(info))
+        glow = QtGui.QRadialGradient(led, 9)
+        glow.setColorAt(0.0, faded(lit.name(), 150))
+        glow.setColorAt(1.0, faded(lit.name(), 0))
+        p.setBrush(glow)
+        p.drawEllipse(led, 9, 9)
+        p.setBrush(QColor("#f2f2f0"))
+        p.drawRect(QRectF(led.x() - 2.6, led.y() - 2.6, 5.2, 5.2))
+        p.setBrush(lit)
+        p.drawEllipse(led, 1.9, 1.9)
+
+        # BOOT and RESET
+        font.setPixelSize(4.4)
+        font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 0.3)
+        p.setFont(font)
+        for cx, label in ((x0 + 190, "BOOT"), (x0 + 220, "RESET")):
+            p.setPen(Qt.NoPen)
+            p.setBrush(QColor("#d3d5da"))
+            p.drawRoundedRect(QRectF(cx - 6.5, y0 + 20, 13, 11), 0.8, 0.8)
+            p.setBrush(QColor("#1a1a1d"))
+            p.drawEllipse(QPointF(cx, y0 + 25.5), 3.0, 3.0)
+            p.setPen(ink)
+            p.drawText(QRectF(cx - 12, y0 + 32, 24, 6), Qt.AlignCenter, label)
+
+        # what is written on it, and what it does now
+        font.setPixelSize(6.4)
+        font.setBold(True)
+        font.setLetterSpacing(QtGui.QFont.AbsoluteSpacing, 0.4)
+        p.setFont(font)
+        p.setPen(ink)
+        p.drawText(QRectF(x0 + 104, y0 + 41, 130, 9),
+                   Qt.AlignLeft | Qt.AlignVCenter, "Wi-Fi Devboard")
+        font.setBold(False)
+        font.setPixelSize(4.8)
+        p.setFont(font)
+        p.setPen(t["accent"])
+        p.drawText(QRectF(x0 + 104, y0 + 50, 130, 7),
+                   Qt.AlignLeft | Qt.AlignVCenter,
+                   "ESP32 Marauder" if info.get("firmware") == "marauder"
+                   else "Black Magic Probe")
+        font.setPixelSize(5.8)
+        font.setBold(True)
+        p.setFont(font)
+        p.setPen(faded(DEVBOARD_INK, 225))
+        p.drawText(QRectF(x0 + 104, y0 + 57, 130, 9),
+                   Qt.AlignLeft | Qt.AlignVCenter, self.devboard_line(info))
+        p.restore()

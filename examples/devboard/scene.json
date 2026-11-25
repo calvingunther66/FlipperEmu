@@ -1,0 +1,79 @@
+{
+  "aps": [
+    {
+      "essid": "Bramble-Home",
+      "bssid": "a4:2b:b0:4e:11:d2",
+      "channel": 1,
+      "rssi": -41,
+      "security": "WPA2",
+      "brand": "TP-Link",
+      "stations": [
+        "3c:22:fb:91:0a:7e",
+        "f0:18:98:2c:55:01"
+      ]
+    },
+    {
+      "essid": "Bramble-Guest",
+      "bssid": "a6:2b:b0:4e:11:d2",
+      "channel": 1,
+      "rssi": -43,
+      "security": "Open",
+      "brand": "TP-Link",
+      "stations": []
+    },
+    {
+      "essid": "NETGEAR57",
+      "bssid": "9c:3d:cf:7a:20:4b",
+      "channel": 6,
+      "rssi": -67,
+      "security": "WPA2",
+      "brand": "Netgear",
+      "stations": [
+        "d8:bb:2c:10:9e:3f"
+      ]
+    },
+    {
+      "essid": "xfinitywifi",
+      "bssid": "2c:7e:81:c4:09:a0",
+      "channel": 11,
+      "rssi": -72,
+      "security": "Open",
+      "brand": "Arris",
+      "stations": []
+    },
+    {
+      "essid": "Pixel_8810",
+      "bssid": "da:a1:19:6b:3e:02",
+      "channel": 6,
+      "rssi": -58,
+      "security": "WPA3",
+      "brand": "",
+      "stations": [
+        "a8:5e:45:07:b1:c9"
+      ]
+    },
+    {
+      "essid": "",
+      "bssid": "70:3a:cb:5f:88:14",
+      "channel": 11,
+      "rssi": -80,
+      "security": "WPA2",
+      "brand": "Google",
+      "stations": []
+    }
+  ],
+  "probes": [
+    {
+      "mac": "f0:18:98:2c:55:01",
+      "essid": "Starbucks WiFi"
+    },
+    {
+      "mac": "f0:18:98:2c:55:01",
+      "essid": "Bramble-Home"
+    },
+    {
+      "mac": "62:0d:9a:41:73:e8",
+      "essid": "eduroam"
+    }
+  ]
+}
