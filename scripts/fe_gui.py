@@ -31,6 +31,7 @@ from PySide6.QtCore import Qt
 
 import fe_files
 import fe_gui_ble
+import fe_gui_vgm
 import fe_gui_widgets as W
 import fe_header
 import fe_record
@@ -121,7 +122,8 @@ does that again with the same package, after a new build.</p>"""
 
 
 # what a module on the GPIO header is called, by its kind in module.json
-MODULE_NAMES = {"devboard": "The Wi-Fi Developer Board"}
+MODULE_NAMES = {"devboard": "The Wi-Fi Developer Board",
+                "vgm": "The Video Game Module"}
 
 
 def pid_alive(pid):
@@ -313,6 +315,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.runner = W.Runner(self.launcher, name, self)
         self.log = W.LogDock(self)
         self.fwlog = W.FirmwareLogDock(self.dir / "uart.log", self)
+        self.hdmi = fe_gui_vgm.HdmiDock(self)     # the VGM's picture
+        self.hdmi_shown = False         # ... shown once a VGM came
         self.front = {}                 # dock: it is the tab in front
         self.build()
         self.build_menus()
@@ -377,6 +381,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.addDockWidget(Qt.BottomDockWidgetArea, self.log)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.fwlog)
         self.tabifyDockWidget(self.log, self.fwlog)
+        self.addDockWidget(Qt.RightDockWidgetArea, self.hdmi)
+        self.hdmi.hide()
         for dock, key in ((self.log, "log"), (self.fwlog, "fwlog")):
             dock.setVisible(self.settings.get(key, False))
             dock.visibilityChanged.connect(
@@ -670,6 +676,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.a_fwlog = self.dock_action(
             m, self.fwlog, "The firmware log", "Ctrl+Shift+L",
             "What the firmware logs, as it logs it")
+        self.a_hdmi = self.dock_action(
+            m, self.hdmi, "The Video Game Module's HDMI", "Ctrl+Shift+H",
+            "The picture that goes out of the module's HDMI port")
         a = A(m, "Always on top", self.set_on_top, checkable=True)
         a.setChecked(self.settings.get("on_top", False))
 
@@ -2476,6 +2485,7 @@ class MainWindow(QtWidgets.QMainWindow):
                          f"{name} is out of the GPIO header.", "you")
         if self.view.set_module(kind, info):
             QtCore.QTimer.singleShot(0, self.fit)
+        self.show_hdmi(info if kind == "vgm" else None)
 
     def show_module_menu(self, pos):
         """The menu of the module on the header: what it is, what to do"""
@@ -2500,6 +2510,33 @@ class MainWindow(QtWidgets.QMainWindow):
             os.kill(int(pid), signal.SIGTERM)
         except (TypeError, ValueError, OSError) as e:
             self.log.add(f"The module could not be pulled out: {e}", "error")
+
+    def show_hdmi(self, info):
+        """The VGM's HDMI picture in its dock: shown when a VGM first comes
+        on the header, and looked at again while it is there"""
+        if info and not self.hdmi_shown:
+            self.hdmi_shown = True
+            self.show_dock(self.hdmi)
+        if not self.hdmi.isHidden():
+            self.hdmi.show_file((info or {}).get("hdmi"))
+
+    def fill_menu_vgm(self, m, info):
+        m.addAction("The Video Game Module").setEnabled(False)
+        m.addAction(fe_gui_vgm.tip(info).split(": ", 1)[-1]
+                    .replace(". Click for its menu", "")).setEnabled(False)
+        m.addSeparator()
+        m.addAction("Show its HDMI picture").triggered.connect(
+            lambda _=False: (self.show_dock(self.hdmi),
+                             self.hdmi.show_file(info.get("hdmi"))))
+        if info.get("hdmi"):
+            m.addAction("Copy where the picture is written").triggered.connect(
+                lambda _=False: QtWidgets.QApplication.clipboard().setText(
+                    info["hdmi"]))
+
+    def plug_vgm(self):
+        """`flipperemu vgm` for this device, in the background"""
+        self.start_link("vgm", ["vgm"], "the Video Game Module on pins 13 "
+                        "and 14")
 
     def fill_menu_devboard(self, m, info):
         marauder = info.get("firmware") == "marauder"
@@ -3149,6 +3186,16 @@ class MainWindow(QtWidgets.QMainWindow):
         m.addSeparator()
         m.addAction("The firmware log (pins 13 and 14)").triggered.connect(
             lambda _=False: self.show_fwlog())
+        if self.view.module == "vgm":
+            a = m.addAction("Pull out the Video Game Module")
+            a.triggered.connect(lambda _=False, pid=self.view.module_info.get(
+                "pid"): self.pull_module(pid))
+        else:
+            a = m.addAction("Plug in the Video Game Module")
+            a.setEnabled(self.is_live() and not self.view.module)
+            a.setToolTip("Its link on pins 13 and 14, its picture on HDMI "
+                         "(./flipperemu vgm); its IMU needs run --spi imu@7")
+            a.triggered.connect(lambda _=False: self.plug_vgm())
 
     # ------------------------------------------------------------ the view
 

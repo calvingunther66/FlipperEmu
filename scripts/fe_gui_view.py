@@ -81,7 +81,7 @@ ZONES = {       # what is not round: where a click means it
 
 # A module on the GPIO header stands this far above the body's box, in LCD
 # pixels (the view grows by it); one that is not here is not drawn
-MODULE_ROOM = {"devboard": 84}
+MODULE_ROOM = {"devboard": 84, "vgm": 60}  # (vgm: fe_gui_vgm.ROOM)
 
 # The Wi-Fi Developer Board: its board, which stands up from the header, as
 # wide as the header's sockets and a little more
@@ -516,6 +516,9 @@ class FlipperView(QtWidgets.QWidget):
     def module_area(self):
         """Where the module on the header is (a QRectF, in the body's
         coordinates), or None"""
+        if self.module == "vgm" and self.top:
+            import fe_gui_vgm
+            return fe_gui_vgm.AREA
         return {"devboard": DEVBOARD}.get(self.module) if self.top else None
 
     def pin_at(self, pos):
@@ -1162,3 +1165,14 @@ class FlipperView(QtWidgets.QWidget):
         p.drawText(QRectF(x0 + 104, y0 + 57, 130, 7),
                    Qt.AlignLeft | Qt.AlignVCenter, self.devboard_line(info))
         p.restore()
+
+    def tip_vgm(self, info):
+        """What to say of the Video Game Module under the pointer"""
+        import fe_gui_vgm
+        return fe_gui_vgm.tip(info)
+
+    def draw_vgm(self, p, t, info):
+        """The Video Game Module, on the back of the Flipper, its top edge
+        above the body with the HDMI and USB-C ports (fe_gui_vgm.py)"""
+        import fe_gui_vgm
+        fe_gui_vgm.draw(p, t, info, self.hover == "module")

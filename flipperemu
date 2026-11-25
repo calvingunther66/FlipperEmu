@@ -5624,17 +5624,12 @@ def cmd_vgm(args):
     look = vgm_reset_line(dev)
     t0 = time.monotonic()
     shown = {"state": "calling"}
-    # what is on the header, for the window to draw (module.json, shared
-    # with the other modules that take pins 13 and 14)
-    note = dev.dir / "module.json"
 
-    def tell(state):
+    def tell(state):            # what is on the header, for the window
         shown["state"] = state
-        tmp = note.with_suffix(".tmp")
-        tmp.write_text(json.dumps({
-            "module": "vgm", "pid": os.getpid(), "state": state,
-            "hdmi": str(hdmi_path.resolve()), "since": time.time()}) + "\n")
-        os.replace(tmp, note)
+        put_module(dev, {"module": "vgm", "state": state,
+                         "hdmi": str(hdmi_path.resolve()),
+                         "since": time.time()})
     # a line of the log -> what the module does now
     STATES = (("linked at", "linked"), ("virtual display: the VGM's", "splash"),
               ("screen stream:", "streaming"), ("link lost", "calling"),
@@ -5647,6 +5642,10 @@ def cmd_vgm(args):
         if state and state != shown["state"]:
             tell(state)
     tell("calling")
+
+    def pulled(*_):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, pulled)
     try:
         try:
             line = FlipperCli(own)
@@ -5707,11 +5706,7 @@ def cmd_vgm(args):
         if line:
             line.close()
         leave_port(lock)
-        try:
-            if json.loads(note.read_text()).get("pid") == os.getpid():
-                note.unlink()
-        except (OSError, ValueError):
-            pass
+        drop_module(dev)
     done = ", ".join(f"{n} {fe_vgm.TASKS[t]}" for t, n in
                      sorted(vgm.jobs.done.items()))
     print(f"[{dev.name}] the VGM is gone: {hdmi.frames} frame"

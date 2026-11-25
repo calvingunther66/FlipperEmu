@@ -22,6 +22,22 @@ firmware and its apps can tell apart:
 `vgm-hdmi.png` in the device's folder (`--hdmi FILE.png`; `--text FILE` also
 writes the mirrored screen as text, as `shot --text` does).
 
+## In the window
+
+While `vgm` runs, the window draws the module on the back of the Flipper,
+its top edge above the GPIO header with the HDMI and USB-C ports in it.
+Its light says what it does: amber while it calls the Flipper, blue while it
+is linked or its picture is on the Flipper's screen, green while the screen
+goes to HDMI (an HDMI cable is in its port then), red while the Flipper holds
+RUN low, purple in the UF2 boot loader. The HDMI dock (View > The Video Game
+Module's HDMI, Ctrl+Shift+H) shows the picture it sends, and comes up by
+itself the first time a module is on the header. GPIO > Plug in the Video
+Game Module starts `vgm` from the window; a click on the module has its
+menu, with Pull it out. `vgm` says what it does in the device's
+module.json, the file the Wi-Fi Developer Board uses too
+([DEVBOARD.md](DEVBOARD.md)). `scripts/vgm_gui_check.py FIRMWARE --out DIR`
+checks all of it off-screen and keeps a picture of each step.
+
 ## The link (pins 13 and 14)
 
 What the module does is what the VGM firmware's `app/uart.c` does, in the

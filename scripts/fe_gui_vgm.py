@@ -19,7 +19,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPainterPath, QPen
 
-from fe_gui_view import BX, BY, GPIO_PINS, faded, mix
+from fe_gui_view import BODY, BX, BY, GPIO_PINS, faded, mix
 
 HEIGHT = 26.0               # how far it stands above the Flipper's top edge
 SHELL = QRectF(BX + 64, BY - HEIGHT, 266, HEIGHT + 14)  # (its lower part
@@ -52,10 +52,9 @@ def tip(info):
             "runs on its RP2040 (./flipperemu vgm). Click for its menu")
 
 
-def zone():
-    """Where a click means the module"""
-    return QtGui.QPolygonF(QRectF(SHELL.x(), SHELL.y() - 6, SHELL.width(),
-                                  HEIGHT + 6 - 0.5))
+# where a click means the module: what shows of it, and its cable
+AREA = QRectF(SHELL.x(), SHELL.y() - 10, SHELL.width(), HEIGHT + 10 - 0.5)
+ROOM = HEIGHT + 34      # how far above the body's box it and its cable reach
 
 
 def shell_path():
@@ -64,10 +63,14 @@ def shell_path():
     return path
 
 
-def draw(p, t, info, hover, clock_ms):
-    """Behind the Flipper's body: what is above its top edge shows"""
+def draw(p, t, info, hover):
+    """On the back of the Flipper: only what is above its body shows (the
+    view draws modules after the body, so the body is cut out of it)"""
     state = (info or {}).get("state")
     p.save()
+    room = QPainterPath()
+    room.addRect(QRectF(-100, -200, 1000, 400))
+    p.setClipPath(room.subtracted(BODY))
     p.setBrush(Qt.NoBrush)                      # the shadow it casts
     for width, alpha in ((6, 5), (3.5, 8), (1.6, 12)):
         p.setPen(QPen(QColor(0, 0, 0, alpha), width))
@@ -107,10 +110,8 @@ def draw(p, t, info, hover, clock_ms):
     p.setPen(t["text"])
     p.drawText(LABEL, Qt.AlignRight | Qt.AlignVCenter, "VIDEO GAME MODULE")
     p.setPen(Qt.NoPen)
-    # its light: what it does (calling blinks)
+    # its light: what it does
     colour = QColor(STATES[state][0]) if state in STATES else None
-    if colour is not None and state == "calling" and clock_ms // 500 % 2:
-        colour = None
     if colour is not None:
         glow = QtGui.QRadialGradient(LIGHT, 7)
         glow.setColorAt(0, faded(colour, 150))
@@ -138,16 +139,6 @@ def draw(p, t, info, hover, clock_ms):
         p.setBrush(QColor("#c3c6cd"))
         p.drawRect(QRectF(HDMI.left() + 1, HDMI.top() - 0.6,
                           HDMI.width() - 2, 1.2))
-    p.restore()
-
-
-def draw_pins(p, t):
-    """Its connector in the Flipper's sockets: drawn over them"""
-    p.save()
-    p.setPen(Qt.NoPen)
-    p.setBrush(faded(mix(t["port"], "#ffffff", 0.15), 170))
-    for x in GPIO_PINS:
-        p.drawRect(QRectF(x - 1.4, BY + 0.6, 2.8, 1.2))
     p.restore()
 
 
