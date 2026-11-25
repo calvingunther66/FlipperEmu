@@ -12,13 +12,19 @@
 let serial = require("serial");
 serial.setup("usart", 115200);
 
+// Listens for about `ms` milliseconds of quiet: only a read that waited out
+// its 250 ms counts (a line, and the empty read at its "\r\n", do not).
 function listen(ms) {
     let left = ms;
+    let got = false;
     while (left > 0) {
         let line = serial.readln(250);
-        left -= 250;
         if (line !== undefined && line.length > 0) {
             print(line);
+            got = true;
+        } else {
+            if (!got) left -= 250;
+            got = false;
         }
     }
 }

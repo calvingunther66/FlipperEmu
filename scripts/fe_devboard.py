@@ -1904,6 +1904,8 @@ class Board:
                     return True
         except KeyboardInterrupt:
             return True
+        if self.closing:
+            return True             # stop(): SIGTERM, as Ctrl-C
         self.log("the Flipper's end of the pins is gone")
         return False
 

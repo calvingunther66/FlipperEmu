@@ -174,10 +174,16 @@ def probe_checks(b, tool, args):
                                 "elf32-littlearm", "-B", "arm",
                                 "--rename-section", ".data=.text,alloc,load,"
                                 "readonly,code,contents",
-                                "--change-section-address", ".text=0x080C0000",
+                                # (objcopy matches the input section's
+                                # name, so the address is for all of it)
+                                "--change-addresses", "0x080C0000",
                                 str(raw), str(page)], check=True)
                 out = gdb(tool, gport, ["monitor swdp_scan", "attach 1",
-                                        "load", "compare-sections",
+                                        # load sets the PC to the file's
+                                        # start, which here is text: a probe
+                                        # does so too, so it is put back
+                                        "set $fe_pc = $pc", "load",
+                                        "set $pc = $fe_pc", "compare-sections",
                                         "x/s 0x080C0000", "detach"], page)
                 check("load writes a page of the flash (vFlash), "
                       "compare-sections matches",
@@ -234,7 +240,9 @@ def main():
     args = ap.parse_args()
     check_limit.arm(900)
     tool = gdb_tool()
-    b = Bench(f"devboardcheck-{int(time.time())}-{os.getpid()}", args.firmware,
+    # (a short name: on macOS a socket's path has 103 bytes at most, and
+    # the device's monitor.sock is in a folder named after it)
+    b = Bench(f"dbc-{os.getpid()}", args.firmware,
               args.timeout)
     try:
         ok = b.start(first=True)
