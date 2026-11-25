@@ -40,8 +40,9 @@ import check_limit  # noqa: E402
 
 REF = bytes((i * 7 + i // 13) & 0xFF for i in range(2000))
 IMU_JS = """let vgm = require("vgm");
+let math = require("math");
 delay(1500);
-print("imu", vgm.present(), Math.floor(vgm.getPitch()), Math.floor(vgm.getRoll()));
+print("imu", vgm.present(), math.floor(vgm.getPitch()), math.floor(vgm.getRoll()));
 """
 
 
@@ -164,7 +165,7 @@ def main():
               module.said("RUN held low"), module.out)
         bench.fe("cli", "gpio set PC1 1")
         check("RUN high again: it starts as at power-up, picture first",
-              wait_for(lambda: module.out.count("virtual display:") >= 2,
+              wait_for(lambda: module.out.count("picture is on") >= 2,
                        20), module.out)
         bench.fe("press", "ok")
         check("... and streams again",

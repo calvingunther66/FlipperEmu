@@ -325,12 +325,14 @@ def png(rows, width, height):
 def splash():
     """The picture the module shows on the Flipper's own screen until a
     button is released there (the VGM's is its own art; this one is a
-    game pad in a frame): 1024 bytes in the LCD's layout"""
+    game pad in a frame): 1024 bytes of XBM, rows of 16 bytes, the lowest
+    bit the leftmost pixel, as the firmware's virtual display draws them
+    (rpc_gui.c, canvas_draw_xbm), not the LCD pages of a screen frame"""
     on = set()
     for xx in range(W):
-        on |= {(xx, 0), (xx, H - 1)}
+        on |= {(xx, 0), (xx, 1), (xx, H - 2), (xx, H - 1)}
     for y in range(H):
-        on |= {(0, y), (W - 1, y)}
+        on |= {(0, y), (1, y), (W - 2, y), (W - 1, y)}
     # the pad: a rounded body, a cross on the left, two buttons on the right
     for y in range(20, 44):
         for xx in range(34, 94):
@@ -347,7 +349,7 @@ def splash():
                     on.add((cx + dx, cy + dy))
     data = bytearray(1024)
     for xx, y in on:
-        data[(y >> 3) * W + xx] |= 1 << (y & 7)
+        data[y * (W // 8) + (xx >> 3)] |= 1 << (xx & 7)
     return bytes(data)
 
 
