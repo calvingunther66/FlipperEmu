@@ -31,6 +31,9 @@ you flash stays flashed, settings and files persist across runs.
   ./flipperemu expansion | expansion --rpc   be an expansion module on its header:
                                              the call, the baud rate, heartbeats,
                                              an RPC session
+  ./flipperemu vgm | vgm --imu gyro-z=90000   be the Video Game Module on its header:
+                                             the screen on HDMI, coprocessor jobs,
+                                             its IMU (with `run --spi imu@7`)
   ./flipperemu i2c | i2c 0x48 temperature 23.5
                                              the I2C bus of its header, where `run
                                              --i2c tmp105@0x48` put a sensor: the
@@ -1026,7 +1029,7 @@ def i2c_begin(dev, proc, specs):
 
 
 # `run --spi`: another name for one of QEMU's device types,
-SPI_NAMES = {"flash": "w25q32"}
+SPI_NAMES = {"flash": "w25q32", "imu": "icm42688p"}
 # ... the SPI devices of QEMU that are not for the header: the Flipper's own,
 # and a display that wants one more pin, for data or command,
 SPI_NOT = ("st7567", "cc1101", "flipper-sd-slot", "st25r3916", "ssd0323")
@@ -5497,6 +5500,220 @@ def cmd_expansion(args):
     return 1
 
 
+VGM_IMU_PROPS = ("accel-x", "accel-y", "accel-z", "gyro-x", "gyro-y",
+                 "gyro-z", "temperature")
+
+
+def vgm_imu(dev, sets):
+    """`vgm --imu PROP=VALUE`: the motion of the IMU that `run --spi
+    imu@7` put on the header's bus; no PROP: what it measures now"""
+    m = open_monitor(dev)
+    try:
+        path = None
+        for pin in fe_header.SPI_SELECTS:
+            p = f"/machine/peripheral/spi-{pin}"
+            if qom_get(m, p, "type") == "icm42688p":
+                path = p
+                break
+        if not path:
+            print(f"[{dev.name}] no IMU on the header's SPI bus: the VGM's "
+                  "is there with `run --spi imu@7` (its chip select is pin 7, "
+                  "PC3)", file=sys.stderr)
+            return 1
+        for word in sets:
+            prop, eq, value = word.partition("=")
+            if prop not in VGM_IMU_PROPS or not eq or not re.fullmatch(
+                    r"-?\d+", value):
+                print(f"[{dev.name}] --imu {word}: PROP=VALUE, PROP one of "
+                      f"{', '.join(VGM_IMU_PROPS)}; accel in mg, gyro in "
+                      "m°/s, temperature in m°C", file=sys.stderr)
+                return 1
+            m.cmd(f"qom-set {path} {prop} {value}")
+        units = {"a": "mg", "g": "m°/s", "t": "m°C"}
+        print(f"[{dev.name}] IMU (ICM-42688-P, pin 7): " + ", ".join(
+            f"{p} {qom_get(m, path, p)} {units[p[0]]}" for p in VGM_IMU_PROPS))
+        return 0
+    finally:
+        m.close()
+
+
+def vgm_reset_line(dev, every=0.5):
+    """What the Flipper does with the VGM's RUN (pin 15, PC1) and USB_BOOT
+    (pin 16, PC0) lines, which it pulls low through the module's MOSFETs:
+    a function -> "run", "reset" (RUN low) or "boot" (BOOT low).
+
+    A thread of its own looks, so that the link never waits for it: the
+    monitor takes one client at a time, and others (`shot`, `press`, `cli`)
+    need it while the module runs, so each look connects, reads the header
+    and lets go, every `every` seconds, and a monitor that is busy now is
+    looked at again next time."""
+    import threading
+    from fe_monitor import Monitor
+    state = {"was": "run"}
+
+    def once():
+        try:
+            m = Monitor(str(dev.monitor), timeout=2.0, wait=0.2)
+        except (OSError, ConnectionError):
+            return
+        try:
+            pins = {p["number"]: p for p in read_header(m) or ()}
+        except (OSError, ConnectionError):
+            return
+        finally:
+            m.close()
+        low = {n for n in (15, 16) if n in pins and pins[n]["mode"] ==
+               "output" and pins[n]["level"] == "low"}
+        state["was"] = "reset" if 15 in low else "boot" if 16 in low else "run"
+
+    def watch():
+        while True:
+            once()
+            time.sleep(every)
+    once()
+    threading.Thread(target=watch, daemon=True).start()
+    return lambda: state["was"]
+
+
+def cmd_vgm(args):
+    """Be the Video Game Module on the header (fe_vgm.py): on pins 13 and
+    14, the link at 2 Mbaud, the screen mirrored to an HDMI picture, and
+    Flipware's coprocessor jobs."""
+    import select
+    import fe_vgm
+    from fe_cli import FlipperCli, PortBusy, leave_port, take_port, usb_endpoint
+    dev = Device(args.device)
+    if args.imu is not None:
+        return vgm_imu(dev, args.imu)
+    if args.seconds is not None and args.seconds <= 0:
+        sys.exit("vgm: --for is more than 0 seconds")
+    hold = {}
+    for word in args.pin or ():
+        pin, eq, value = word.partition("=")
+        mv = ({"high": fe_vgm.VDD_MV, "low": 0}.get(value.lower())
+              if value.lower() in ("high", "low")
+              else fe_header.parse_volts(value)) if eq else None
+        if not pin.isdigit() or int(pin) not in fe_vgm.BREAKOUT or mv is None:
+            sys.exit(f"vgm --pin {word}: a breakout pin of the VGM ("
+                     f"{', '.join(map(str, fe_vgm.BREAKOUT))}) and what holds "
+                     "it: 26=1.2V, 22=high, 16=low")
+        hold[int(pin)] = mv
+    hdmi_path = pathlib.Path(args.hdmi) if args.hdmi else dev.dir / "vgm-hdmi.png"
+
+    port, (_, pins, chip) = "usart", UART_PORTS["usart"]
+    m = open_monitor(dev)
+    try:
+        own = usb_endpoint(m, UART_OWN[port])
+        states = {p["name"]: p for p in read_serial(m) or ()}
+    finally:
+        m.close()
+    if not own:
+        sys.exit(f"[{dev.name}] pins {pins} ({chip}) are as QEMU was told "
+                 "with --serial: `vgm` needs a run with --serial stdio, pty, "
+                 "null, tcp:PORT or file:PATH")
+    if states.get(chip, {}).get("hears") != "edge":
+        print(f"[{dev.name}] pins {pins}: the firmware's expansion service "
+              "does not wait for a module there yet (Settings, Expansion "
+              "Modules, Listen UART: pins 13 and 14). The VGM calls until it "
+              "does.", file=sys.stderr)
+    try:
+        lock = take_port(dev.dir / f"{port}.lock", 5.0, f"pins {pins} are")
+    except PortBusy as e:
+        sys.exit(f"[{dev.name}] {e}")
+    line = None
+    look = vgm_reset_line(dev)
+    t0 = time.monotonic()
+    shown = {"state": "calling"}
+
+    def tell(state):            # what is on the header, for the window
+        shown["state"] = state
+        put_module(dev, {"module": "vgm", "state": state,
+                         "hdmi": str(hdmi_path.resolve()),
+                         "since": time.time()})
+    # a line of the log -> what the module does now
+    STATES = (("linked at", "linked"), ("virtual display: the VGM's", "splash"),
+              ("screen stream:", "streaming"), ("link lost", "calling"),
+              ("RUN held low", "reset"), ("USB_BOOT held low", "boot"))
+
+    def log(text):
+        print(f"{(time.monotonic() - t0):8.2f} s  {text}", flush=True)
+        state = next((st for start, st in STATES if text.startswith(start)),
+                     None)
+        if state and state != shown["state"]:
+            tell(state)
+    tell("calling")
+
+    def pulled(*_):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, pulled)
+    try:
+        try:
+            line = FlipperCli(own)
+        except OSError as e:
+            sys.exit(f"[{dev.name}] pins {pins}: {e}")
+        uart_drop(line)
+
+        def receive(seconds):
+            if not select.select([line.fd], [], [], seconds)[0]:
+                return b""
+            data = line.sock.recv(65536)
+            if not data:
+                raise fe_vgm.x.Lost("the device is gone (its emulator closed "
+                                    "the port)")
+            return data
+
+        def said(who, data, note):
+            if args.verbose or (data and data[0] == fe_vgm.COPROC):
+                name, words = fe_vgm.in_words(data) if data else (note, "")
+                log(f"{who:8} {name:10} {words}")
+
+        breakout = fe_vgm.Breakout(hold)
+        hdmi = fe_vgm.Hdmi(str(hdmi_path), args.text, args.colours)
+        vgm = fe_vgm.Vgm(line.sock.sendall, receive, said,
+                         fe_vgm.Jobs(breakout, log), hdmi, log=log)
+        vgm.quiet_frames = not args.verbose
+        print(f"[{dev.name}] the Video Game Module is on pins {pins} "
+              f"({chip}); HDMI: {hdmi_path}", flush=True)
+        end = None if args.seconds is None else time.monotonic() + args.seconds
+        splash = not args.no_splash
+        made = 0
+        try:
+            while end is None or time.monotonic() < end:
+                state = look()
+                if state != "run":
+                    log("RUN held low by the Flipper: the RP2040 is in reset"
+                        if state == "reset" else
+                        "USB_BOOT held low: the RP2040 waits as a UF2 drive "
+                        "(its firmware does not run)")
+                    while state != "run" and (end is None or
+                                              time.monotonic() < end):
+                        time.sleep(0.1)
+                        was, state = state, look()
+                        if was == "reset" and state == "boot":
+                            continue
+                    splash = not args.no_splash     # a power-up again
+                    continue
+                def stop():
+                    return look() != "run"
+                left = None if end is None else max(0.0, end -
+                                                    time.monotonic())
+                made += vgm.run(left, splash=splash, until=stop)
+                splash = False
+        except KeyboardInterrupt:
+            pass
+        hdmi.flush(force=True)
+    finally:
+        if line:
+            line.close()
+        leave_port(lock)
+        drop_module(dev)
+    done = ", ".join(f"{n} {fe_vgm.TASKS[t]}" for t, n in
+                     sorted(vgm.jobs.done.items()))
+    print(f"[{dev.name}] the VGM is gone: {hdmi.frames} frame"
+          f"{'' if hdmi.frames == 1 else 's'} on HDMI"
+          + (f", jobs done: {done}" if done else ""), flush=True)
+    return 0 if made else 1
+
 
 class DevboardTarget:
     """The emulated Flipper as the Wi-Fi Developer Board sees it
@@ -8029,6 +8246,48 @@ def main():
                    metavar="S", help="keep the link for so many seconds "
                                      "(default 1)")
     p.set_defaults(func=cmd_expansion)
+
+    p = sub.add_parser(
+        "vgm", help="be the Video Game Module on a running device's GPIO "
+        "header: the screen mirrored to an HDMI picture, the coprocessor's "
+        "jobs, the IMU's motion (--imu)",
+        description="The Video Game Module on pins 13 and 14, as its "
+        "firmware is (docs/VGM.md): it calls the firmware's expansion "
+        "service, asks for 2000000 baud, starts an RPC session, shows its "
+        "picture on the Flipper's screen until a button is released there "
+        "(once a power-up; --no-splash: not), and then mirrors the screen "
+        "stream to HDMI: a 640 by 480 PNG, written again as frames come.  "
+        "It answers Flipware's coprocessor jobs (CRC-32, heatshrink, the "
+        "GPIO of its breakout, HID inject) and starts again when the link "
+        "is lost.  The Flipper's RUN (pin 15) and USB_BOOT (pin 16) lines "
+        "hold its RP2040 in reset.  Its IMU is on the header's SPI bus: "
+        "`run --spi imu@7` puts it there, and `vgm --imu accel-x=500` "
+        "moves it.  Exit status 1: the link was never made.")
+    p.add_argument("--for", dest="seconds", type=float, metavar="S",
+                   help="stay so many seconds (default: until Ctrl-C)")
+    p.add_argument("--hdmi", metavar="FILE.png",
+                   help="the HDMI picture (default: vgm-hdmi.png in the "
+                        "device's folder)")
+    p.add_argument("--text", metavar="FILE",
+                   help="also the mirrored screen as text (as `shot --text`)")
+    p.add_argument("--colours", "--colors", choices=("stock", "firmware"),
+                   default="stock",
+                   help="stock: orange and black, as the VGM's firmware "
+                        "draws (default); firmware: the colours that the "
+                        "frames carry (Momentum's VGM colour settings)")
+    p.add_argument("--no-splash", action="store_true",
+                   help="go straight to the screen stream")
+    p.add_argument("--pin", action="append", metavar="N=LEVEL",
+                   help="hold a breakout pin of the VGM (16, 17, 21-29) from "
+                        "outside: high, low or a voltage (26=1.2V, read by "
+                        "the coprocessor's ADC on 26-29); once for each pin")
+    p.add_argument("--imu", nargs="*", metavar="PROP=VALUE",
+                   help="no link: set the motion of the IMU (accel-x/y/z in "
+                        "mg, gyro-x/y/z in m°/s, temperature in m°C) and say "
+                        "what it measures; alone, just say it")
+    p.add_argument("-v", "--verbose", action="store_true",
+                   help="every frame of both sides but heartbeats")
+    p.set_defaults(func=cmd_vgm)
 
     p = sub.add_parser(
         "devboard", help="put the Wi-Fi Developer Board on a running "

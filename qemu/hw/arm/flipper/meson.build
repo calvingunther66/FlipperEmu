@@ -35,6 +35,7 @@ arm_common_ss.add(when: 'CONFIG_FLIPPER_ZERO', if_true: files(
   'flipper_rfid.c',
   'flipper_ibutton.c',
   't5577.c',
+  'icm42688p.c',
   'flipper_enclave.c',
   'flipper_zero.c',
 ))

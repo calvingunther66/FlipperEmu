@@ -25,8 +25,9 @@ KEYS = {"ok": "ret", "back": "backspace", "up": "up", "down": "down",
 
 
 class Monitor:
-    def __init__(self, path, timeout=5.0):
-        end = time.time() + timeout
+    def __init__(self, path, timeout=5.0, wait=None):
+        """`wait`: how long to wait for a busy monitor (default: timeout)"""
+        end = time.time() + (timeout if wait is None else wait)
         while True:
             # a new socket each time: on macOS one whose connect failed
             # cannot connect again
