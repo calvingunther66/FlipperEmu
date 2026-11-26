@@ -5351,7 +5351,8 @@ def cmd_i2c(args):
 def cmd_expansion(args):
     """Be an expansion module on a serial port of the header, as far as the
     firmware's expansion service can tell: the call, the baud rate,
-    heartbeats, and with --rpc a session that a ping goes through.  Every
+    heartbeats, and with --rpc a session that a ping goes through, IsLocked
+    asked of it (--unlock: and whether a module can unlock it).  Every
     frame is printed with its time (this computer's, from the call on)."""
     import select
     import fe_expansion as x
@@ -5361,6 +5362,9 @@ def cmd_expansion(args):
         sys.exit("expansion: --for is 0 seconds or more")
     if not 0 < args.baud < 1 << 32:
         sys.exit("expansion: --baud is a baud rate, as 115200")
+    if (args.unlock or args.tries) and not args.rpc:
+        sys.exit("expansion: --unlock and --try are sent over the RPC "
+                 "session: they go with --rpc")
 
     def look():
         m = open_monitor(dev)
@@ -5445,6 +5449,7 @@ def cmd_expansion(args):
                   f"{data.hex(' '):20} {words}".rstrip(), flush=True)
 
         module = x.Module(line.sock.sendall, receive, said)
+        broke = False       # --rpc: the module got what a locked one may not
         print(f"[{dev.name}] pins {pins} ({chip}): a module calls, and asks "
               f"for {args.baud} baud", flush=True)
         try:
@@ -5466,6 +5471,58 @@ def cmd_expansion(args):
                                  f"something else: {main}")
                 print(f"[{dev.name}] the RPC session is there: a ping came "
                       f"back in {took * 1000:.0f} ms", flush=True)
+                ids = iter(range(2, 1 << 16))
+
+                def ask(field, body=b""):
+                    """A command, and its answers (2 s for the last one)"""
+                    command, got = next(ids), []
+
+                    def done():
+                        more, module.stream, last = x.answers(module.stream,
+                                                              command)
+                        got.extend(more)
+                        return last
+                    module.write(x.request(command, field, body))
+                    if not module.keep(2.0, done):
+                        raise x.Lost(f"the RPC session did not answer command "
+                                     f"{command} (PB.Main field {field}) in "
+                                     "2 s")
+                    return got
+
+                def is_locked():
+                    return x.status(ask(x.IS_LOCKED)[-1]) == "OK"
+
+                locked = is_locked()
+                print(f"[{dev.name}] IsLocked: the Flipper says it is "
+                      + ("locked" if locked else "not locked"), flush=True)
+                for name in args.tries:
+                    what, field, body = x.TRIES[name]
+                    said = x.status(ask(field, body)[-1])
+                    if said == "OK":
+                        print(f"[{dev.name}] --try {name}: {what} went "
+                              "through (OK)" + (": the module got it while "
+                                                "the Flipper is locked"
+                                                if locked else ""),
+                              file=sys.stderr if locked else sys.stdout,
+                              flush=True)
+                        broke = broke or locked
+                    else:
+                        print(f"[{dev.name}] --try {name}: {what} was refused "
+                              f"({said})", flush=True)
+                if args.unlock:
+                    said = x.status(ask(x.UNLOCK)[-1])
+                    still = is_locked()
+                    print(f"[{dev.name}] --unlock: the Flipper "
+                          + ("took the unlock (OK)" if said == "OK" else
+                             f"refused the unlock ({said})")
+                          + "; IsLocked again: it is "
+                          + ("still locked" if still else "not locked"),
+                          flush=True)
+                    if locked and not still:
+                        print(f"[{dev.name}] a module on pins {pins} unlocked "
+                              "a PIN-locked Flipper", file=sys.stderr,
+                              flush=True)
+                        broke = True
             module.quiet = True
             start, before = time.monotonic(), module.beats
             module.keep(args.seconds)
@@ -5493,7 +5550,7 @@ def cmd_expansion(args):
         if port in waiting(look()[0]):
             print(f"[{dev.name}] the module is gone; the firmware gave the "
                   "link up, and waits for a call again")
-            return 0
+            return 1 if broke else 0
     print(f"[{dev.name}] pins {pins}: the module is gone, and 2 s later the "
           "firmware does not wait for the next one: it has the port as: "
           f"{fe_header.port_text(look()[0][chip])}", file=sys.stderr)
@@ -8227,11 +8284,19 @@ def main():
         "every 80 ms for --for seconds.  Every frame of both sides is "
         "printed with its time, bytes and meaning (the heartbeats after the "
         "first are counted).  --rpc: the module starts an RPC session, sends "
-        "it a ping, keeps the link, and stops the session.  At the end the "
+        "it a ping, asks it whether the Flipper is locked (IsLocked: OK is "
+        "locked, ERROR is not), keeps the link, and stops the session.  "
+        "--unlock: then it asks the Flipper to unlock (DesktopUnlockRequest), "
+        "says whether it was refused or taken, and asks IsLocked again; "
+        "--try: commands that a locked Flipper refuses a module (Flipware), "
+        "each said to be refused or to have gone through.  At the end the "
         "module says nothing more, and the firmware is waited for until it "
         "has given the link up.  Exit status 1, with what happened in "
         "words: the firmware waits for no module on that port, it refused "
-        "the baud rate, or the link was lost.  The port is the one the "
+        "the baud rate, or the link was lost; or the Flipper was locked and "
+        "the module unlocked it (--unlock), or a --try went through.  A "
+        "Flipper that was not locked may take both: that is said, and is no "
+        "failure.  The port is the one the "
         "firmware waits on (Settings > Expansion Modules > Listen UART): "
         "pins 13 and 14 unless that was changed.")
     p.add_argument("--port", choices=("lpuart", "usart"),
@@ -8242,6 +8307,16 @@ def main():
     p.add_argument("--rpc", action="store_true",
                    help="start an RPC session over the link, ping it, and "
                         "stop it at the end")
+    p.add_argument("--unlock", action="store_true",
+                   help="with --rpc: ask the Flipper to unlock, and whether "
+                        "it is locked afterwards (a locked Flipware refuses "
+                        "it; stock firmware unlocks)")
+    p.add_argument("--try", dest="tries", action="append", default=[],
+                   choices=("storage-list", "input"),
+                   help="with --rpc: send that too, which a locked Flipper "
+                        "must refuse a module: storage-list (a list of /ext), "
+                        "input (a press of Back: an unlocked Flipper takes "
+                        "it); again for more")
     p.add_argument("--for", dest="seconds", type=float, default=1.0,
                    metavar="S", help="keep the link for so many seconds "
                                      "(default 1)")
