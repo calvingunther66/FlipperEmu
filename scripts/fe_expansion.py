@@ -288,11 +288,36 @@ def fields(data):
     return out
 
 
+def request(command, field, body=b""):
+    """A PB.Main with that command_id and, in the content field of that
+    number, that message (b"": an empty one), behind its length"""
+    main = (b"\x08" + varint(command) + varint(field << 3 | 2)
+            + varint(len(body)) + bytes(body))
+    return varint(len(main)) + main
+
+
 def ping(command, data):
     """An RPC ping (PB.Main: command_id 1, system_ping_request 5)"""
-    request = b"\x0a" + varint(len(data)) + data
-    main = b"\x08" + varint(command) + b"\x2a" + varint(len(request)) + request
-    return varint(len(main)) + main
+    return request(command, PING, b"\x0a" + varint(len(data)) + data)
+
+
+# The content fields of PB.Main that `expansion --rpc` sends, and the
+# command_status of an answer
+PING, IS_LOCKED, UNLOCK = 5, 66, 67
+STORAGE_LIST, INPUT_EVENT = 7, 23
+OK, ERROR = 0, 1
+STATUSES = {0: "OK", 1: "ERROR", 2: "ERROR_DECODE", 3: "ERROR_NOT_IMPLEMENTED",
+            4: "ERROR_BUSY"}
+
+# What a module must not get while the Flipper is locked: (what it is, its
+# field, its message).  The input event is Back, short: on a Flipper that
+# takes it, whatever is on its screen is told so.
+TRIES = {
+    "storage-list": ("a list of /ext (storage_list_request)", STORAGE_LIST,
+                     b"\x0a\x04/ext"),
+    "input": ("a press of Back (gui_send_input_event_request)", INPUT_EVENT,
+              b"\x08\x05\x10\x02"),
+}
 
 
 def message(stream):
@@ -303,6 +328,29 @@ def message(stream):
         return None
     size, at = head
     return fields(stream[at:at + size]), stream[at + size:]
+
+
+def status(main):
+    """An answer's command_status, in words"""
+    code = main.get(2, 0)
+    return STATUSES.get(code, f"status {code}")
+
+
+def answers(stream, command):
+    """The whole messages at the start of the stream, and whether the last
+    answer to that command_id has come (has_next 3 not set): (the answers
+    to it, what is left of the stream, done).  Other messages (a status
+    that nobody asked for has command_id 0) are passed over."""
+    out, done = [], False
+    while not done:
+        got = message(stream)
+        if not got:
+            break
+        main, stream = got
+        if main.get(1, 0) == command:
+            out.append(main)
+            done = not main.get(3, 0)
+    return out, stream, done
 
 
 def pong(main):

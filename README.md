@@ -540,7 +540,7 @@ picture of the save to the pixel and the tag, and goes on with Pause.
 | `gpio record OUT.vcd` \| `gpio record stop` \| `gpio watch [PIN,PIN]` | every change of a pin's level with its time: into a file a logic analyzer's program opens, or printed as it happens |
 | `uart` \| `uart send TEXT [--expect TEXT]` \| `uart wait TEXT` \| `uart term` | the serial port on pins 15 and 16 of its header: where it goes; send to the app that has it open, and wait for its answer; wait for what the app sends; a terminal on it. `--port usart`: the one on pins 13 and 14 |
 | `uart --line-baud N` \| `uart --line-baud auto` | the baud rate of what is wired to that port, from then on: with another than the firmware's, each side takes the other's bytes as a UART at the wrong speed does (`auto`: the firmware's own, whatever it is) |
-| `expansion [--rpc] [--baud N] [--for S] [--port P]` | be an expansion module on its header, to the firmware's expansion service: the call, the baud rate, heartbeats, an RPC session; every frame printed |
+| `expansion [--rpc [--unlock] [--try T]] [--baud N] [--for S] [--port P]` | be an expansion module on its header, to the firmware's expansion service: the call, the baud rate, heartbeats, an RPC session (is the Flipper locked; `--unlock`: can a module unlock it); every frame printed |
 | `devboard [--firmware blackmagic\|marauder] [--gdb-port P] [--uart-port P] [--scene FILE]` | the Wi-Fi Developer Board on its header: its stock Black Magic Probe (a GDB server for `./fbt flash` and debugging, and the firmware's log), or ESP32 Marauder for the WiFi Marauder app ([docs/DEVBOARD.md](docs/DEVBOARD.md)) |
 | `run --i2c TYPE@ADDRESS[,NAME=VALUE]` | start with a device on the I2C bus of its header (pins 15 and 16): `--i2c tmp105@0x48,temperature=23.5`, `--i2c eeprom@0x50`; once for each device. `run --i2c help` lists the types |
 | `i2c` \| `i2c ADDRESS` \| `i2c ADDRESS NAME` \| `i2c ADDRESS NAME VALUE` | that bus: its devices with their values, and what the firmware called; one device; one value, bare; set a value while the firmware runs. `i2c --json`: the bus and its devices' values for a program |
@@ -2534,6 +2534,8 @@ $ ./flipperemu expansion --rpc
      56.0 ms  Flipper  data       05 11 10 08 01 32 0c 0a 0a 46 6c 69 70 70 65 72 45 6d 75 3a 17 bytes
      56.1 ms  module   status     02 00 02             OK
 [flipper] the RPC session is there: a ping came back in 6 ms
+          ...  (IsLocked's data frames, the module's and the Flipper's)
+[flipper] IsLocked: the Flipper says it is not locked
    1056.2 ms  module   control    04 01 05             stop RPC
    1057.8 ms  Flipper  status     02 00 02             OK
 [flipper] the link held for 1.0 s at 115200 baud: 12 more heartbeats, each answered
@@ -2555,6 +2557,14 @@ waits for the next call. Exit status 0: all of that went as the protocol says.
   rate`). A port that it does not wait on is not called at all: `expansion` says how
   the firmware has that port, and which one it waits on, if any. With Listen UART at
   None it waits on neither.
+- After the ping the module asks `IsLocked` (OK: locked with a PIN, ERROR: not).
+  `--unlock` sends `DesktopUnlockRequest` too, says whether the Flipper refused it or
+  took it, and asks `IsLocked` again. `--try storage-list` (a list of `/ext`) and
+  `--try input` (a press of Back) are commands that Flipware refuses a module while
+  it is locked, unless Allow Module RPC While Locked is on. Exit status 1 when the
+  Flipper was locked and the module unlocked it, or a `--try` went through: stock
+  firmware does both. `scripts/lock_check.py FIRMWARE` sets a PIN, starts the device
+  locked and checks that `expansion --rpc --unlock` is refused.
 - The port is the one the firmware waits on, unnamed: pins 13 and 14, or 15 and 16
   with Listen UART at LPUART (that one by hand, on the official 1.5.1). `--port`
   says that it has to be this one.
