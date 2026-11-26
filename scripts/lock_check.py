@@ -11,7 +11,7 @@ IsLocked says it is not locked.  Then the device is stopped and a PIN is set
 the way the firmware keeps one: in the RTC's backup registers, which the
 emulator saves in the device's nvram.bin (the "coin cell") when it stops.
 Register 7 gets the PIN (Up Down Right Left: two bits a button, the length
-in the top four bits), register 1 the Lock flag (FuriHalRtcFlagLock, bit 2),
+in the top four bits), register 1 the Lock flag (FuriHalRtcFlagLock, bit 10),
 register 5 no failed tries.  Started again, the firmware's desktop finds a
 PIN and the flag and locks itself, as after a reboot of a locked Flipper.
 Then `expansion --rpc --unlock --try storage-list --try input`: IsLocked
@@ -57,7 +57,7 @@ NVRAM_SIZE = 0x1090
 BKP_AT = 0x1040
 BKP = 0x40002850                # BKP0R on the bus
 SYSTEM, PIN_FAILS, PIN_VALUE = 1, 5, 7  # FuriHalRtcRegister
-FLAG_LOCK = 1 << 2                      # FuriHalRtcFlagLock
+FLAG_LOCK = (1 << 2) << 8               # FuriHalRtcFlagLock: SystemReg.flags is bits 8..15
 PIN = [0, 1, 2, 3]              # Up Down Right Left (InputKey)
 
 
