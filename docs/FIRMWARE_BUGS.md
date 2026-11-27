@@ -24,8 +24,8 @@ keeps its row, with the version that fixed it.
 [Flipware](https://github.com/calvingunther66/Flipware) has fixed FW-01, FW-02, FW-03, FW-04
 (and FW-19, which has its cause), FW-06, FW-08, FW-10 to FW-14, FW-16, FW-17, FW-20, FW-21 and
 FW-23; its `documentation/FirmwareBugTriage.md` says what was done to each and what is left.
-`scripts/fwbugs_check.py` gives FW-01, FW-02, FW-04 and FW-06 to a firmware, and fails on one that
-has them.
+`scripts/fwbugs_check.py` gives FW-01, FW-02 and FW-06 to a firmware (FW-04 too, with `--fuzz`), and
+fails on one that has them. `--fuzz` is off by default because the NFC fuzzer still ends in FW-05.
 
 ## The list
 
