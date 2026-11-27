@@ -99,6 +99,7 @@ def fw04(b, work):
 
 
 def fw06(b):
+    before = len(b.uart_text())     # (an earlier check's crash is not ours)
     code, text = b.fe("app", "NFC")
     if code:
         print("  SKIP  FW-06: no NFC app in this firmware", flush=True)
@@ -107,7 +108,7 @@ def fw06(b):
     b.fe("press", "ok")                     # its first item: Read
     time.sleep(3)
     code, text = b.fe("app", "--close")
-    log = b.uart_text()
+    log = b.uart_text()[before:]
     check("FW-06: the NFC app asked to close in the middle of a read: "
           "closed, and the firmware does not crash",
           code == 0 and not CRASH.search(log),
