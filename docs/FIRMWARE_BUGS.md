@@ -19,6 +19,14 @@ source or shows the same way on every run with nothing of the model in its path.
 A new bug gets the next number and a row in the table. A bug that is fixed upstream
 keeps its row, with the version that fixed it.
 
+## Fixed in Flipware
+
+[Flipware](https://github.com/calvingunther66/Flipware) has fixed FW-01, FW-02, FW-03, FW-04
+(and FW-19, which has its cause), FW-06, FW-08, FW-10 to FW-14, FW-16, FW-17, FW-20, FW-21 and
+FW-23; its `documentation/FirmwareBugTriage.md` says what was done to each and what is left.
+`scripts/fwbugs_check.py` gives FW-01, FW-02, FW-04 and FW-06 to a firmware, and fails on one that
+has them.
+
 ## The list
 
 | No. | What happens | Firmwares | Kind | Reported |
