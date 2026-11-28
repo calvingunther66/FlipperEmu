@@ -8,7 +8,7 @@
 Boots a throwaway device, reads the firmware's `free` (free heap and the
 largest free block), opens the Sub-GHz app, enters Read (its first item) and
 reads `free` again.  The firmware must not restart on the way in, must still
-answer on the CLI afterwards, and in Read the largest free block must be at
+answer on the CLI with the app still running, and in Read the largest free block must be at
 least --min-block bytes (default 0: it only prints the numbers).  The numbers
 are printed as `RAM: ...` lines so that a CI run shows them.
 
@@ -36,6 +36,14 @@ def heap(b):
         m = re.search(rf"{label}: (\d+)", text)
         got[key] = int(m.group(1)) if m else None
     return got, text
+
+
+def runs(b):
+    """The Sub-GHz app still runs and the CLI says so: (it does, what it said).
+    (`uptime`, which Bench.answers() asks for, is refused while an app is open.)
+    """
+    code, text = b.fe("cli", "--timeout", "10", "--", "loader info")
+    return code == 0 and 'Application "Sub-GHz" is running' in text, text
 
 
 def show(when, got):
@@ -77,10 +85,11 @@ def main():
             check("entering Read does not restart the firmware",
                   log.count("Startup complete") == 1 and not CRASH.search(log),
                   log[-2000:])
-            ok, said = b.answers()
-            check("the firmware's CLI answers in Read", ok, said)
+            ok, said = runs(b)
+            check("the app still runs and the CLI answers in Read", ok, said)
             read, text = heap(b)
             show("Sub-GHz Read", read)
+            b.fe("shot", "--text", b.dir / "read.txt")  # (a look, with --keep)
             if read["block"] is not None and args.min_block:
                 check(f"Sub-GHz Read leaves a free block of {args.min_block} B "
                       "or more", read["block"] >= args.min_block,
